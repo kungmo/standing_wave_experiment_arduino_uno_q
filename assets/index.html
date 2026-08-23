@@ -1,0 +1,1533 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Open Standing Wave Lab</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 1080px; margin: 24px auto; padding: 0 14px 40px; line-height: 1.5; color: #222; }
+    h1 { font-size: 26px; margin-bottom: 4px; }
+    h2 { font-size: 19px; margin: 0 0 10px; }
+    .sub { color: #555; font-size: 14px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin-top: 16px; background: #fff; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    button { padding: 10px 15px; font-size: 15px; border: 1px solid #aaa; border-radius: 8px; background: #fff; cursor: pointer; }
+    button:disabled { opacity: .45; cursor: default; }
+    button.primary { font-weight: 700; }
+    .jog-row { margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
+    .jog-label { font-size: 14px; font-weight: 700; margin-right: 4px; }
+    .jog-status { font-size: 13px; color: #666; min-width: 72px; }
+    input, select { width: 130px; padding: 8px; font-size: 15px; border: 1px solid #bbb; border-radius: 7px; }
+    label { font-size: 14px; }
+    .field { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 12px; }
+    .status-box { border: 1px solid #eee; border-radius: 8px; padding: 9px; }
+    .status-box strong { display: block; font-size: 12px; color: #666; }
+    .status-box span { font-size: 16px; }
+    .good { color: #177245; font-weight: 700; }
+    .bad { color: #b3261e; font-weight: 700; }
+    .warning { background: #fff8e1; border: 1px solid #efd58a; padding: 9px; border-radius: 8px; margin-top: 10px; font-size: 14px; }
+    #message, #settingsMessage { min-height: 1.5em; margin-top: 10px; font-size: 14px; }
+    .chart-wrap { position: relative; height: 430px; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; margin-top: 10px; }
+    canvas { width: 100%; height: 100%; display: block; touch-action: manipulation; }
+    .chart-tooltip {
+      position: absolute; display: none; pointer-events: none; z-index: 5;
+      min-width: 150px; max-width: 220px; padding: 8px 10px; border-radius: 8px;
+      background: rgba(32,32,32,.94); color: #fff; font-size: 12px; line-height: 1.45;
+      font-variant-numeric: tabular-nums; box-shadow: 0 4px 14px rgba(0,0,0,.22);
+      white-space: nowrap;
+    }
+    .chart-tooltip strong { font-size: 12.5px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; margin-top: 8px; color: #555; }
+    .table-wrap { max-height: 360px; overflow: auto; border: 1px solid #ddd; border-radius: 8px; margin-top: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+    th, td { padding: 7px 9px; border-bottom: 1px solid #eee; text-align: right; white-space: nowrap; }
+    th { position: sticky; top: 0; background: #f6f6f6; }
+    th:first-child, td:first-child { text-align: center; }
+    .analysis { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .analysis-box { border: 1px solid #ddd; border-radius: 9px; padding: 12px; }
+    .big { font-size: 21px; font-weight: 700; }
+    .muted { color: #666; font-size: 13px; }
+    code { background: #f5f5f5; padding: 1px 4px; border-radius: 4px; }
+
+    /* v3.10 floating experiment chatbot with Markdown + LaTeX rendering */
+    .chat-launcher {
+      position: fixed; right: 20px; bottom: 20px; width: 58px; height: 58px;
+      border-radius: 50%; border: 0; background: #222; color: #fff; font-size: 25px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.22); z-index: 1000; padding: 0; margin: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .chat-launcher:hover { transform: translateY(-1px); }
+    .chat-panel {
+      position: fixed; right: 20px; bottom: 88px; width: min(390px, calc(100vw - 28px));
+      height: min(560px, calc(100vh - 120px)); background: #fff; border: 1px solid #d8d8d8;
+      border-radius: 16px; box-shadow: 0 14px 40px rgba(0,0,0,.22); z-index: 999;
+      display: none; flex-direction: column; overflow: hidden;
+    }
+    .chat-panel.open { display: flex; }
+    .chat-header { padding: 12px 14px; border-bottom: 1px solid #e7e7e7; display:flex; align-items:center; gap:8px; background:#fafafa; }
+    .chat-header-main { flex:1; min-width:0; }
+    .chat-title { font-weight: 750; font-size: 15px; }
+    .chat-model { color:#666; font-size:11px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .chat-header button { margin:0; padding:5px 8px; font-size:12px; border-radius:6px; }
+    .chat-messages { flex:1; overflow-y:auto; padding:12px; background:#f7f8fa; }
+    .chat-row { display:flex; margin:8px 0; }
+    .chat-row.user { justify-content:flex-end; }
+    .chat-bubble { max-width:88%; padding:9px 11px; border-radius:12px; overflow-wrap:anywhere; font-size:14px; line-height:1.45; }
+    .chat-row.user .chat-bubble { background:#222; color:#fff; border-bottom-right-radius:4px; white-space:pre-wrap; }
+    .chat-row.assistant .chat-bubble { background:#fff; border:1px solid #ddd; border-bottom-left-radius:4px; }
+    .chat-row.system .chat-bubble { background:#fff8e1; border:1px solid #efd58a; color:#555; max-width:100%; font-size:12px; white-space:pre-wrap; }
+    .chat-row.assistant .chat-bubble > :first-child { margin-top:0; }
+    .chat-row.assistant .chat-bubble > :last-child { margin-bottom:0; }
+    .chat-row.assistant .chat-bubble p { margin:.5em 0; }
+    .chat-row.assistant .chat-bubble ul, .chat-row.assistant .chat-bubble ol { margin:.45em 0; padding-left:1.5em; }
+    .chat-row.assistant .chat-bubble li { margin:.2em 0; }
+    .chat-row.assistant .chat-bubble h1, .chat-row.assistant .chat-bubble h2, .chat-row.assistant .chat-bubble h3, .chat-row.assistant .chat-bubble h4 { margin:.7em 0 .35em; line-height:1.25; }
+    .chat-row.assistant .chat-bubble h1 { font-size:1.22em; }
+    .chat-row.assistant .chat-bubble h2 { font-size:1.16em; }
+    .chat-row.assistant .chat-bubble h3, .chat-row.assistant .chat-bubble h4 { font-size:1.08em; }
+    .chat-row.assistant .chat-bubble pre { overflow:auto; background:#f3f4f6; border-radius:7px; padding:8px; white-space:pre; }
+    .chat-row.assistant .chat-bubble pre code { background:transparent; padding:0; }
+    .chat-row.assistant .chat-bubble blockquote { margin:.5em 0; padding:.15em .7em; border-left:3px solid #bbb; color:#555; }
+    .chat-row.assistant .chat-bubble table { width:100%; border-collapse:collapse; margin:.55em 0; font-size:12.5px; }
+    .chat-row.assistant .chat-bubble th, .chat-row.assistant .chat-bubble td { border:1px solid #ddd; padding:4px 6px; text-align:left; white-space:normal; }
+    .chat-row.assistant .chat-bubble mjx-container { max-width:100%; overflow-x:auto; overflow-y:hidden; }
+    .chat-row.assistant .chat-bubble mjx-container[display="true"] { margin:.65em 0 !important; }
+    .chat-suggestions { display:flex; gap:6px; overflow-x:auto; padding:8px 10px 0; background:#fff; }
+    .chat-suggestions button { flex:0 0 auto; margin:0; padding:6px 9px; font-size:12px; border-radius:14px; }
+    .chat-input-area { border-top:1px solid #e7e7e7; padding:9px; background:#fff; }
+    .chat-input-row { display:flex; gap:7px; align-items:flex-end; }
+    #chatInput { flex:1; min-height:42px; max-height:105px; resize:vertical; border:1px solid #bbb; border-radius:9px; padding:9px; font:inherit; font-size:14px; }
+    #chatSendButton { margin:0; padding:10px 13px; }
+    .chat-footnote { margin-top:5px; color:#777; font-size:10.5px; }
+    @media (max-width: 520px) {
+      .chat-launcher { right:14px; bottom:14px; }
+      .chat-panel { right:14px; bottom:80px; width:calc(100vw - 28px); height:min(70vh, 560px); }
+    }
+  </style>
+</head>
+<body>
+  <h1>Open Standing Wave Lab</h1>
+  <div class="sub">Arduino UNO Q 기반 정상파 자동 스캔 · 수동 복귀 기준점 · 추정 위치 보정 · 반복측정 불확실성 · 수동/수치 파장 분석</div>
+
+  <div class="card">
+    <h2>1. 실험 설정</h2>
+    <div class="controls">
+      <div class="field"><label for="frequency">공명 주파수 f</label><input id="frequency" type="number" min="0" step="0.1" placeholder="예: 980"><span>Hz</span></div>
+      <div class="field"><label for="tubeLength">관 길이</label><input id="tubeLength" type="number" min="0" step="0.1" placeholder="예: 90"><span>cm</span></div>
+      <div class="field"><label for="tubeType">관 종류</label><select id="tubeType"><option value="open">개관 (양쪽 열림)</option><option value="one_end_closed">한쪽이 막힌 관</option><option value="unknown">미지정</option></select></div>
+      <div class="field"><label for="distance">1회 이동당 추정 거리</label><input id="distance" type="number" min="0" step="0.001" placeholder="자로 보정"><span>cm</span></div>
+      <div class="field"><label for="maxCycles">마지막 회차</label><input id="maxCycles" type="number" min="1" max="1000" step="1" value="110"><span>회</span></div>
+      <div class="field"><label for="firstMeasureAtStart">첫 데이터 위치</label><select id="firstMeasureAtStart"><option value="1">시작 위치 (0 cm)</option><option value="0">1회 이동 후</option></select></div>
+      <button onclick="saveConfig()">설정 저장</button>
+      <button id="downloadExperimentBundleButton" onclick="downloadExperimentBundle()">실험 세트 저장 (ZIP)</button>
+      <button id="importBundleButton" onclick="document.getElementById('bundleFileInput').click()">실험 세트 불러오기 (ZIP)</button>
+      <input id="bundleFileInput" type="file" accept=".zip,application/zip" style="display:none">
+    </div>
+    <div class="controls jog-row">
+      <span class="jog-label">실 장력 조절</span>
+      <button id="jogForwardButton" onclick="startJog(1)">▶ 정방향</button>
+      <button id="jogStopButton" onclick="stopJog()">■ 정지</button>
+      <button id="jogReverseButton" onclick="startJog(-1)">◀ 역방향</button>
+      <span id="jogState" class="jog-status">정지</span>
+    </div>
+    <div class="warning"><b>장력 조절:</b> 새 실험에서 데이터가 비어 있을 때만 사용할 수 있습니다. 정방향은 실제 측정 이동 방향이며, 버튼을 누르면 저속으로 계속 회전하고 <b>정지</b>를 누르면 즉시 멈추고 코일을 해제합니다. JOG로 위치를 움직인 뒤에는 반드시 마이크의 시작 위치를 맞추고 <b>시작 위치 확인</b>을 다시 누르십시오.</div>
+    <div class="warning"><b>첫 데이터 위치:</b> 기본값인 <b>시작 위치 (0 cm)</b>를 선택하면 1회차를 현재 시작 위치에서 먼저 측정하고, 2회차부터 한 번씩 이동합니다. <b>1회 이동 후</b>를 선택하면 기존 방식처럼 이동한 뒤 1회차를 측정합니다.</div>
+    <div class="warning">실-도르래 구동에서는 미끄럼과 실의 신장 때문에 위치가 절대좌표가 아닐 수 있습니다. 보정값을 입력하면 모든 x축을 <b>추정 위치(cm)</b>로 표시하며, 보정값이 0이면 회차로 표시합니다.</div>
+    <div class="warning">배선: D8~D11 → ULN2003. GND를 UNO Q와 공통으로 연결합니다. A0에는 0~3.3 V 범위만 입력하십시오. 현재 빠른 측정 설정은 모터 20 RPM, 안정화 0.5초, 200 ms × 10회 측정입니다.</div>
+    <div id="settingsMessage"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. 장치 제어</h2>
+    <div class="controls">
+      <button id="confirmButton" onclick="confirmStartPosition()">시작 위치 확인</button>
+      <button id="startButton" class="primary" onclick="startRun()">측정 시작</button>
+      <button id="stopButton" onclick="stopRun()">정지 / 모터 코일 해제</button>
+      <button id="resetButton" onclick="resetAll()">측정 데이터 초기화</button>
+    </div>
+    <div class="status-grid">
+      <div class="status-box"><strong>상태</strong><span id="state">확인 중</span></div>
+      <div class="status-box"><strong>회차-위치 기준</strong><span id="positionState">-</span></div>
+      <div class="status-box"><strong>완료</strong><span id="cycleState">0 / -</span></div>
+      <div class="status-box"><strong>현재 단계</strong><span id="phaseState">-</span></div>
+    </div>
+    <div class="warning"><b>새 실험 준비:</b> 필요한 결과를 먼저 저장한 뒤 측정 데이터를 초기화하십시오. 필요하면 위의 장력 조절 JOG로 실을 팽팽하게 만든 뒤 마이크를 시작 표시선에 맞추고 <b>시작 위치 확인</b>을 누르십시오. 이 버튼은 모터를 움직이지 않습니다.</div>
+    <div class="warning"><b>중간 정지 주의:</b> 한 회차의 이동/안정화/측정 도중 정지하면 마이크가 이미 일부 이동했을 수 있으므로 회차-위치 대응을 자동으로 무효 처리합니다. 그 경우 이어서 측정하지 말고 새 실험 준비 절차를 거치십시오.</div>
+    <div id="message"></div>
+  </div>
+
+  <div class="card">
+    <h2>3. 실시간 정상파 그래프</h2>
+    <div class="sub" id="axisNote">가로축: 회차 / 세로축: 마이크 출력 peak-to-peak 전압</div>
+    <div class="chart-wrap" id="chartWrap"><canvas id="chart"></canvas><div id="chartTooltip" class="chart-tooltip"></div></div>
+    <div class="legend">
+      <span>● 측정 평균</span><span>│ 표준편차</span><span>× clipping 의심</span><span>— curve fit</span><span>◆ 학생이 선택한 마디 후보</span>
+    </div>
+    <div class="warning">그래프에서 <b>인접한 두 마디(최소점)</b>를 차례로 터치하면 학생 계산으로 λ = 2Δx를 구합니다. 위치 보정값이 입력되어 있어야 활성화됩니다.</div>
+  </div>
+
+  <div class="card">
+    <h2>4. 파장 분석</h2>
+    <div class="analysis">
+      <div class="analysis-box">
+        <strong>학생의 수동 마디 선택</strong>
+        <div id="manualResult" class="muted" style="margin-top:8px">아직 두 마디를 선택하지 않았습니다.</div>
+        <div style="margin-top:10px"><button onclick="clearNodes()">선택 지우기</button></div>
+      </div>
+      <div class="analysis-box">
+        <strong>수학적 curve fitting</strong>
+        <div class="muted" style="margin-top:6px">clipping 의심점을 제외하고 <code>baseline + amplitude·|sin(2πx/λ+φ)|</code> 모델을 맞춥니다.</div>
+        <div style="margin-top:10px"><button onclick="runFit()">Curve fitting 실행</button></div>
+        <div id="fitResult" class="muted" style="margin-top:8px">아직 실행하지 않았습니다.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>5. 측정 데이터</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>회차</th><th>추정 위치 (cm)</th><th>평균 Vpp (V)</th><th>표준편차 (V)</th><th>Clipping</th><th>저장 시각</th></tr></thead>
+        <tbody id="dataBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <button id="chatLauncher" class="chat-launcher" type="button" aria-label="실험 챗봇 열기" title="실험 챗봇">💬</button>
+  <section id="chatPanel" class="chat-panel" aria-label="실험 데이터 챗봇">
+    <div class="chat-header">
+      <div class="chat-header-main">
+        <div class="chat-title">정상파 실험 챗봇</div>
+        <div id="chatModelText" class="chat-model">Gemini 연결 확인 중...</div>
+      </div>
+      <button id="chatClearButton" type="button">대화 지우기</button>
+      <button id="chatCloseButton" type="button" aria-label="챗봇 닫기">✕</button>
+    </div>
+    <div id="chatMessages" class="chat-messages"></div>
+    <div class="chat-suggestions">
+      <button type="button" data-chat-question="현재 데이터에서 파장은 얼마인가요?">파장은?</button>
+      <button type="button" data-chat-question="현재 fitting 결과를 해석해 주세요.">fitting 해석</button>
+      <button type="button" data-chat-question="마디와 배는 그래프에서 어떻게 찾나요?">마디·배</button>
+      <button type="button" data-chat-question="이 실험에서 오차가 생길 수 있는 원인을 설명해 주세요.">오차 원인</button>
+    </div>
+    <div class="chat-input-area">
+      <div class="chat-input-row">
+        <textarea id="chatInput" rows="2" maxlength="2000" placeholder="현재 실험 데이터나 정상파에 대해 질문하세요."></textarea>
+        <button id="chatSendButton" type="button" class="primary">전송</button>
+      </div>
+      <div class="chat-footnote">현재 측정값·설정·Python fitting 결과는 매 질문마다 최신 스냅샷 1개로 전달됩니다. 대화 기록에는 질문/답변만 보관합니다.</div>
+    </div>
+  </section>
+
+  <!-- Chat response renderer libraries. Measurement/export code does not depend on these libraries. -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@18.0.9/lib/marked.umd.js"></script>
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true
+      },
+      svg: { fontCache: 'local' },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@4.1.3/tex-svg.js"></script>
+
+<script>
+const chart = document.getElementById('chart');
+const ctx = chart.getContext('2d');
+const chartWrap = document.getElementById('chartWrap');
+const chartTooltip = document.getElementById('chartTooltip');
+const frequencyInput = document.getElementById('frequency');
+const tubeLengthInput = document.getElementById('tubeLength');
+const tubeTypeInput = document.getElementById('tubeType');
+const distanceInput = document.getElementById('distance');
+const maxCyclesInput = document.getElementById('maxCycles');
+const firstMeasureAtStartInput = document.getElementById('firstMeasureAtStart');
+const bundleFileInput = document.getElementById('bundleFileInput');
+const importBundleButton = document.getElementById('importBundleButton');
+const message = document.getElementById('message');
+const settingsMessage = document.getElementById('settingsMessage');
+const stateEl = document.getElementById('state');
+const positionStateEl = document.getElementById('positionState');
+const cycleStateEl = document.getElementById('cycleState');
+const phaseStateEl = document.getElementById('phaseState');
+const dataBody = document.getElementById('dataBody');
+const axisNote = document.getElementById('axisNote');
+const manualResult = document.getElementById('manualResult');
+const fitResult = document.getElementById('fitResult');
+const startButton = document.getElementById('startButton');
+const stopButton = document.getElementById('stopButton');
+const confirmButton = document.getElementById('confirmButton');
+const resetButton = document.getElementById('resetButton');
+const jogForwardButton = document.getElementById('jogForwardButton');
+const jogReverseButton = document.getElementById('jogReverseButton');
+const jogStopButton = document.getElementById('jogStopButton');
+const jogState = document.getElementById('jogState');
+const chatLauncher = document.getElementById('chatLauncher');
+const chatPanel = document.getElementById('chatPanel');
+const chatCloseButton = document.getElementById('chatCloseButton');
+const chatClearButton = document.getElementById('chatClearButton');
+const chatMessages = document.getElementById('chatMessages');
+const chatInput = document.getElementById('chatInput');
+const chatSendButton = document.getElementById('chatSendButton');
+const chatModelText = document.getElementById('chatModelText');
+
+let measurements = [];
+let config = {frequency_hz: 0, tube_length_cm: 0, tube_type: 'open', distance_per_cycle_cm: 0, max_cycles: 110, first_measure_at_start: true, data_mode: 'live'};
+let selectedNodes = [];
+let fitData = null;
+let latestState = null;
+let chartMap = null;
+let pollTimer = null;
+let pollInFlight = false;
+let configInputsInitialized = false;
+let configInputsDirty = false;
+let jogHeartbeatTimer = null;
+let requestedJogDirection = 0;
+let jogHeartbeatInFlight = false;
+let chatBusy = false;
+let bundleImportInFlight = false;
+let lastChatModel = 'google:gemini-3.5-flash-lite';
+const CHAT_SESSION_KEY = 'standingWaveChatSessionV1';
+const CHAT_MESSAGES_KEY = 'standingWaveChatMessagesV1';
+let chatSessionId = sessionStorage.getItem(CHAT_SESSION_KEY);
+if (!chatSessionId) {
+  chatSessionId = (crypto?.randomUUID?.() || `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  sessionStorage.setItem(CHAT_SESSION_KEY, chatSessionId);
+}
+
+[frequencyInput, tubeLengthInput, tubeTypeInput, distanceInput, maxCyclesInput, firstMeasureAtStartInput].forEach(input => {
+  input.addEventListener('input', () => {
+    configInputsDirty = true;
+  });
+});
+
+function syncConfigInputsFromServer(force=false) {
+  const editing = document.activeElement === frequencyInput || document.activeElement === tubeLengthInput || document.activeElement === tubeTypeInput || document.activeElement === distanceInput || document.activeElement === maxCyclesInput || document.activeElement === firstMeasureAtStartInput;
+  if (!force && (editing || configInputsDirty)) return;
+  frequencyInput.value = Number(config.frequency_hz) > 0 ? config.frequency_hz : '';
+  tubeLengthInput.value = Number(config.tube_length_cm) > 0 ? config.tube_length_cm : '';
+  tubeTypeInput.value = ['open','one_end_closed','unknown'].includes(config.tube_type) ? config.tube_type : 'unknown';
+  distanceInput.value = Number(config.distance_per_cycle_cm) > 0 ? config.distance_per_cycle_cm : '';
+  maxCyclesInput.value = Number(config.max_cycles) > 0 ? Math.round(Number(config.max_cycles)) : 110;
+  firstMeasureAtStartInput.value = config.first_measure_at_start === false ? '0' : '1';
+  configInputsInitialized = true;
+}
+
+function setMessage(text, isError=false) {
+  message.textContent = text || '';
+  message.className = isError ? 'bad' : '';
+}
+
+function setSettingsMessage(text, isError=false) {
+  settingsMessage.textContent = text || '';
+  settingsMessage.className = isError ? 'bad' : '';
+}
+
+function phaseText(s) {
+  if (!s) return '-';
+  if (Number(s.jog_direction) === 1) return '장력 조절: 정방향';
+  if (Number(s.jog_direction) === -1) return '장력 조절: 역방향';
+  if (s.phase === 1) return `다음 위치로 이동 중 (${s.step_index}/197 step)`;
+  if (s.phase === 2) return '측정 전 0.5초 안정화 중';
+  if (s.phase === 3) return `소리 진폭 반복측정 중 (${s.measure_index}/10)`;
+  return '정지';
+}
+
+function updateStatus(s) {
+  latestState = s;
+  const busy = !!s.running;
+  const jog = Number(s.jog_direction || 0);
+  const manualBusy = jog !== 0;
+  const imported = config.data_mode === 'imported';
+
+  if (imported) {
+    stateEl.textContent = '불러온 데이터 분석';
+    stateEl.className = 'good';
+    positionStateEl.textContent = '불러온 데이터';
+    positionStateEl.className = 'good';
+    cycleStateEl.textContent = `${measurements.length}개`;
+    phaseStateEl.textContent = '오프라인 분석';
+    startButton.disabled = true;
+    confirmButton.disabled = true;
+    jogForwardButton.disabled = true;
+    jogReverseButton.disabled = true;
+    jogStopButton.disabled = !manualBusy;
+    resetButton.disabled = busy || manualBusy;
+    stopButton.disabled = !busy && !manualBusy;
+    jogState.textContent = '불러온 데이터 분석 모드';
+    jogState.className = 'jog-status';
+    importBundleButton.disabled = busy || manualBusy || bundleImportInFlight;
+    return;
+  }
+
+  stateEl.textContent = busy ? '측정 중' : (manualBusy ? '장력 조절 중' : '정지');
+  stateEl.className = (busy || manualBusy) ? 'good' : '';
+  jogState.textContent = jog === 1 ? '정방향 회전' : (jog === -1 ? '역방향 회전' : '정지');
+  jogState.className = manualBusy ? 'jog-status good' : 'jog-status';
+  if (s.position_ready) {
+    positionStateEl.textContent = '유효';
+    positionStateEl.className = 'good';
+  } else if (Number(s.last_result_rev) > 0) {
+    positionStateEl.textContent = '중간 정지로 무효';
+    positionStateEl.className = 'bad';
+  } else {
+    positionStateEl.textContent = '시작 위치 확인 필요';
+    positionStateEl.className = '';
+  }
+  cycleStateEl.textContent = `${s.last_result_rev} / ${s.max_cycles}`;
+  phaseStateEl.textContent = phaseText(s);
+  startButton.disabled = busy || manualBusy || !s.position_ready || s.last_result_rev >= s.max_cycles;
+  confirmButton.disabled = busy || manualBusy || s.last_result_rev > 0 || !!s.position_ready;
+  resetButton.disabled = busy || manualBusy;
+  stopButton.disabled = !busy && !manualBusy;
+  const jogAllowed = !busy && Number(s.last_result_rev || 0) === 0;
+  jogForwardButton.disabled = !jogAllowed || jog === 1;
+  jogReverseButton.disabled = !jogAllowed || jog === -1;
+  jogStopButton.disabled = !manualBusy;
+  importBundleButton.disabled = busy || manualBusy || bundleImportInFlight;
+}
+
+function normalizeMeasurements(rows) {
+  const byRev = new Map();
+  for (const row of (Array.isArray(rows) ? rows : [])) {
+    const rev = Number(row.rev);
+    if (!Number.isInteger(rev) || rev < 1) continue;
+    byRev.set(rev, row); // Last copy wins if an old dataset contains duplicates.
+  }
+  return Array.from(byRev.values()).sort((a,b) => Number(a.rev) - Number(b.rev));
+}
+
+async function loadData({syncInputs=false} = {}) {
+  try {
+    const r = await fetch(`/api/data?t=${Date.now()}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'data error');
+    measurements = normalizeMeasurements(d.measurements);
+    config = d.config || config;
+    if (syncInputs || !configInputsInitialized) {
+      syncConfigInputsFromServer(true);
+    }
+    updateStatus(d.state);
+    renderTable();
+    drawChart();
+    updateManualResult();
+  } catch (e) {
+    setMessage('데이터 확인 오류: ' + e, true);
+  }
+}
+
+async function pollStatus() {
+  if (pollInFlight) return;
+  pollInFlight = true;
+  try {
+    const r = await fetch(`/api/status?t=${Date.now()}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'status error');
+
+    const hadState = !!latestState;
+    const oldSeq = latestState ? Number(latestState.data_seq) : -1;
+    const oldRev = latestState ? Number(latestState.last_result_rev) : -1;
+    const oldBoot = latestState ? Number(latestState.boot_id || 0) : 0;
+
+    updateStatus(d.state);
+
+    const newSeq = Number(d.state.data_seq);
+    const newRev = Number(d.state.last_result_rev);
+    const newBoot = Number(d.state.boot_id || 0);
+
+    // Reload the full dataset whenever a completed point appears OR the MCU session changes.
+    // Checking both data_seq and last_result_rev makes the live graph robust even if one
+    // counter is reset/reconciled during an MCU restart. Input fields are NOT overwritten
+    // because loadData() only synchronizes them on initial load or explicit config save.
+    if (!hadState || newSeq !== oldSeq || newRev !== oldRev || newBoot !== oldBoot) {
+      await loadData();
+    }
+  } catch (e) {
+    setMessage('상태 확인 오류: ' + e, true);
+  } finally {
+    pollInFlight = false;
+  }
+}
+
+function ensurePolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(pollStatus, 700);
+}
+
+async function sendJogCommand(direction, announce=false) {
+  if (jogHeartbeatInFlight) return true;
+  jogHeartbeatInFlight = true;
+  try {
+    const detail = announce ? 1 : 0;
+    const r = await fetch(`/api/jog?direction=${encodeURIComponent(direction)}&detail=${detail}&t=${Date.now()}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'jog error');
+    if (d.state) updateStatus(d.state);
+    if (announce) {
+      if (direction === 1) setSettingsMessage('장력 조절 모터를 정방향(측정 방향)으로 저속 회전합니다. 원하는 장력이 되면 정지를 누르십시오.');
+      else if (direction === -1) setSettingsMessage('장력 조절 모터를 역방향으로 저속 회전합니다. 원하는 위치가 되면 정지를 누르십시오.');
+      else setSettingsMessage('장력 조절 모터를 정지하고 코일을 해제했습니다. 시작 위치를 맞춘 뒤 시작 위치 확인을 누르십시오.');
+    }
+    return true;
+  } catch (e) {
+    if (announce) setSettingsMessage('장력 조절 오류: ' + e, true);
+    return false;
+  } finally {
+    jogHeartbeatInFlight = false;
+  }
+}
+
+async function startJog(direction) {
+  direction = Number(direction) >= 0 ? 1 : -1;
+  if (latestState && Number(latestState.last_result_rev || 0) > 0) {
+    setSettingsMessage('측정 데이터가 남아 있을 때는 장력 조절 JOG를 사용할 수 없습니다. 새 실험 준비 시 데이터 초기화 후 사용하십시오.', true);
+    return;
+  }
+  if (jogHeartbeatTimer) clearInterval(jogHeartbeatTimer);
+  requestedJogDirection = direction;
+  const ok = await sendJogCommand(direction, true);
+  if (!ok) {
+    requestedJogDirection = 0;
+    return;
+  }
+  jogHeartbeatTimer = setInterval(async () => {
+    if (requestedJogDirection === 0) return;
+    const ok = await sendJogCommand(requestedJogDirection, false);
+    if (!ok) {
+      requestedJogDirection = 0;
+      if (jogHeartbeatTimer) {
+        clearInterval(jogHeartbeatTimer);
+        jogHeartbeatTimer = null;
+      }
+      setSettingsMessage('장력 조절 통신이 끊겨 JOG 갱신을 중단했습니다. MCU watchdog이 자동으로 모터를 정지/해제합니다.', true);
+    }
+  }, 500);
+}
+
+async function stopJog(announce=true) {
+  requestedJogDirection = 0;
+  if (jogHeartbeatTimer) {
+    clearInterval(jogHeartbeatTimer);
+    jogHeartbeatTimer = null;
+  }
+  return await sendJogCommand(0, announce);
+}
+
+function tubeTypeLabel(value) {
+  if (value === 'open') return '개관(양쪽 열림)';
+  if (value === 'one_end_closed') return '한쪽이 막힌 관';
+  return '미지정';
+}
+
+async function saveConfig() {
+  const f = Math.max(0, Number(frequencyInput.value || 0));
+  const tubeLength = Math.max(0, Number(tubeLengthInput.value || 0));
+  const tubeType = ['open','one_end_closed','unknown'].includes(tubeTypeInput.value) ? tubeTypeInput.value : 'unknown';
+  const dx = Math.max(0, Number(distanceInput.value || 0));
+  const maxCycles = Number(maxCyclesInput.value);
+  const firstAtStart = firstMeasureAtStartInput.value === '1' ? 1 : 0;
+  if (!Number.isInteger(maxCycles) || maxCycles < 1 || maxCycles > 1000) {
+    setSettingsMessage('마지막 회차는 1~1000 사이의 정수로 입력하십시오.', true);
+    return false;
+  }
+  try {
+    const params = new URLSearchParams({frequency_hz:String(f), tube_length_cm:String(tubeLength), tube_type:tubeType, distance_per_cycle_cm:String(dx), max_cycles:String(maxCycles), first_measure_at_start:String(firstAtStart), t:String(Date.now())});
+    const r = await fetch(`/api/config?${params.toString()}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'config error');
+    config = d.config;
+    measurements = normalizeMeasurements(d.measurements);
+    if (d.state) updateStatus(d.state);
+    configInputsDirty = false;
+    syncConfigInputsFromServer(true);
+    selectedNodes = [];
+    fitData = null;
+    renderTable(); drawChart(); updateManualResult();
+    fitResult.textContent = '설정이 바뀌어 fitting 결과를 지웠습니다.';
+    const savedTarget = config.data_mode === 'imported' ? '불러온 데이터 분석 설정을 저장했습니다.' : '실험 설정을 UNO Q에 저장했습니다.';
+    const lengthText = Number(config.tube_length_cm || 0) > 0 ? `${Number(config.tube_length_cm).toFixed(1)} cm` : '미입력';
+    setSettingsMessage(`${savedTarget} 공명 주파수 ${Number(config.frequency_hz || 0).toFixed(1)} Hz · 관 ${lengthText}, ${tubeTypeLabel(config.tube_type)} · 1회 이동 ${Number(config.distance_per_cycle_cm || 0).toFixed(3)} cm · 마지막 회차 ${Math.round(Number(config.max_cycles || maxCycles))}회 · 첫 데이터 ${config.first_measure_at_start === false ? '1회 이동 후' : '시작 위치(0 cm)'}`);
+    return true;
+  } catch (e) { setSettingsMessage('설정 저장 오류: ' + e, true); return false; }
+}
+
+async function confirmStartPosition() {
+  if (!confirm('마이크를 손으로 되감아 시작 표시선에 정확히 맞췄습니까? 이 확인은 모터를 움직이지 않고 현재 물리적 위치를 새 실험의 기준으로 선언합니다.')) return;
+  try {
+    const r = await fetch(`/api/confirm-start?t=${Date.now()}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'start-position error');
+    updateStatus(d.state);
+    setMessage('현재 마이크 위치를 새 실험의 시작 기준으로 확인했습니다.');
+  } catch (e) { setMessage('시작 위치 확인 오류: ' + e, true); }
+}
+
+async function startRun() {
+  try {
+    const configSaved = await saveConfig();
+    if (!configSaved) return;
+    const r = await fetch(`/api/start?t=${Date.now()}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'start error');
+    updateStatus(d.state);
+    setMessage('측정을 시작했습니다.');
+  } catch (e) { setMessage('측정 시작 오류: ' + e, true); }
+}
+
+async function stopRun() {
+  requestedJogDirection = 0;
+  if (jogHeartbeatTimer) { clearInterval(jogHeartbeatTimer); jogHeartbeatTimer = null; }
+  try {
+    const r = await fetch(`/api/stop?t=${Date.now()}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'stop error');
+    updateStatus(d.state); await loadData();
+    if (d.state.position_ready) {
+      setMessage('정지했습니다. 모터 코일을 해제했고 완료된 데이터는 UNO Q에 유지됩니다. 회차 사이에서 정지되어 위치 대응은 유지됩니다.');
+    } else {
+      setMessage('정지했습니다. 모터 코일을 해제했습니다. 회차 도중 정지되어 회차-위치 대응이 무효이므로 새 실험 준비가 필요합니다.', true);
+    }
+  } catch (e) { setMessage('정지 오류: ' + e, true); }
+}
+
+async function resetAll() {
+  requestedJogDirection = 0;
+  if (jogHeartbeatTimer) { clearInterval(jogHeartbeatTimer); jogHeartbeatTimer = null; }
+  if (!confirm('UNO Q에 저장된 현재 측정 데이터와 MCU 회차를 모두 초기화합니다. 계속하시겠습니까?')) return;
+  try {
+    const r = await fetch(`/api/reset?t=${Date.now()}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'reset error');
+    measurements = []; selectedNodes = []; fitData = null;
+    if (d.config) config = d.config;
+    updateStatus(d.state); renderTable(); drawChart(); updateManualResult();
+    fitResult.textContent = '아직 실행하지 않았습니다.';
+    setMessage('측정 데이터를 초기화했습니다. 모터 코일은 해제되어 있습니다. 도르래를 손으로 되감아 마이크를 시작 표시선에 맞춘 뒤 시작 위치 확인을 누르십시오.');
+  } catch (e) { setMessage('초기화 오류: ' + e, true); }
+}
+
+function renderTable() {
+  dataBody.innerHTML = '';
+  measurements = normalizeMeasurements(measurements);
+  for (const m of measurements) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${m.rev}</td><td>${m.x_cm == null ? '-' : Number(m.x_cm).toFixed(3)}</td><td>${Number(m.avg_v).toFixed(3)}</td><td>${Number(m.std_v).toFixed(3)}</td><td class="${m.clipped ? 'bad':''}">${m.clipped ? '의심' : ''}</td><td>${escapeHtml((m.time || '').replace('T',' '))}</td>`;
+    dataBody.appendChild(tr);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');
+}
+
+function xValue(m) { return m.x_cm == null ? Number(m.rev) : Number(m.x_cm); }
+
+function drawChart() {
+  hideChartTooltip();
+  const rect = chart.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(320, rect.width), height = Math.max(280, rect.height);
+  chart.width = Math.round(width*dpr); chart.height = Math.round(height*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,width,height);
+
+  const left=64,right=20,top=18,bottom=52, plotW=width-left-right, plotH=height-top-bottom;
+  const calibrated = Number(config.distance_per_cycle_cm) > 0;
+  const configuredMaxCycles = Math.max(1, Number(config.max_cycles || latestState?.max_cycles || 110));
+  const configuredDistance = Number(config.distance_per_cycle_cm || 0);
+  const firstAtStart = config.first_measure_at_start !== false;
+  const defaultXMax = calibrated ? Math.max(0, configuredMaxCycles - (firstAtStart ? 1 : 0)) * configuredDistance : configuredMaxCycles;
+  axisNote.textContent = calibrated ? '가로축: 추정 위치 (cm) / 세로축: 마이크 출력 peak-to-peak 전압 (V)' : '가로축: 회차 / 세로축: 마이크 출력 peak-to-peak 전압 (V)';
+  const xs = measurements.length ? measurements.map(xValue) : [0, defaultXMax];
+  let xMin = measurements.length ? Math.min(...xs) : 0;
+  let xMax = measurements.length ? Math.max(...xs) : defaultXMax;
+  if (xMax <= xMin) xMax = xMin + 1;
+  const yCandidates = measurements.flatMap(m => [Number(m.avg_v)+Number(m.std_v||0), Number(m.avg_v)]);
+  if (fitData && fitData.fit_points) for (const p of fitData.fit_points) yCandidates.push(Number(p.predicted_v));
+  let yMax = yCandidates.length ? Math.max(...yCandidates) * 1.12 : 1.0;
+  yMax = Math.max(0.2, Math.min(3.3, yMax));
+  const px = x => left + (x-xMin)/(xMax-xMin)*plotW;
+  const py = y => top + plotH - Math.max(0,Math.min(yMax,y))/yMax*plotH;
+  chartMap = {left,top,plotW,plotH,xMin,xMax,yMax,px,py};
+
+  ctx.font='12px sans-serif'; ctx.strokeStyle='#ddd'; ctx.fillStyle='#555'; ctx.lineWidth=1;
+  for (let i=0;i<=5;i++) {
+    const x=xMin+(xMax-xMin)*i/5, xx=px(x);
+    ctx.beginPath();ctx.moveTo(xx,top);ctx.lineTo(xx,top+plotH);ctx.stroke();
+    ctx.textAlign='center';ctx.textBaseline='top';ctx.fillText(calibrated?x.toFixed(1):Math.round(x),xx,top+plotH+7);
+    const y=yMax*i/5, yy=py(y);
+    ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(left+plotW,yy);ctx.stroke();
+    ctx.textAlign='right';ctx.textBaseline='middle';ctx.fillText(y.toFixed(2),left-7,yy);
+  }
+  ctx.strokeStyle='#333';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(left,top);ctx.lineTo(left,top+plotH);ctx.lineTo(left+plotW,top+plotH);ctx.stroke();
+  ctx.fillStyle='#222';ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillText(calibrated?'추정 위치 (cm)':'회차',left+plotW/2,height-3);
+  ctx.save();ctx.translate(16,top+plotH/2);ctx.rotate(-Math.PI/2);ctx.textAlign='center';ctx.textBaseline='top';ctx.fillText('마이크 출력 Vpp (V)',0,0);ctx.restore();
+
+  if (fitData && fitData.ok && fitData.fit_points?.length) {
+    ctx.strokeStyle='#7b1fa2';ctx.lineWidth=2;ctx.beginPath();
+    fitData.fit_points.forEach((p,i)=>{ const xx=px(Number(p.x_cm)),yy=py(Number(p.predicted_v)); if(i===0)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy); });ctx.stroke();
+  }
+
+  if (measurements.length) {
+    ctx.strokeStyle='#1565c0';ctx.lineWidth=2;ctx.beginPath();
+    measurements.forEach((m,i)=>{const xx=px(xValue(m)),yy=py(Number(m.avg_v));if(i===0)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy);});ctx.stroke();
+    for (const m of measurements) {
+      const xx=px(xValue(m)), yy=py(Number(m.avg_v)), e=Number(m.std_v||0);
+      ctx.strokeStyle='#555';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(xx,py(Number(m.avg_v)-e));ctx.lineTo(xx,py(Number(m.avg_v)+e));ctx.stroke();
+      ctx.fillStyle=m.clipped?'#b3261e':'#1565c0';ctx.beginPath();ctx.arc(xx,yy,3.2,0,Math.PI*2);ctx.fill();
+      if(m.clipped){ctx.strokeStyle='#b3261e';ctx.beginPath();ctx.moveTo(xx-5,yy-5);ctx.lineTo(xx+5,yy+5);ctx.moveTo(xx+5,yy-5);ctx.lineTo(xx-5,yy+5);ctx.stroke();}
+    }
+  }
+
+  ctx.fillStyle='#d97706';
+  for (const n of selectedNodes) {
+    const xx=px(n.x_cm), yy=py(n.avg_v);
+    ctx.beginPath();ctx.moveTo(xx,yy-7);ctx.lineTo(xx+7,yy);ctx.lineTo(xx,yy+7);ctx.lineTo(xx-7,yy);ctx.closePath();ctx.fill();
+  }
+}
+
+function hideChartTooltip() {
+  chartTooltip.style.display = 'none';
+  chart.style.cursor = 'default';
+}
+
+function nearestMeasurementAtPointer(ev) {
+  if (!measurements.length || !chartMap) return null;
+  const rect = chart.getBoundingClientRect();
+  const mouseX = ev.clientX - rect.left;
+  const mouseY = ev.clientY - rect.top;
+  let best = null;
+  let bestDistance = Infinity;
+
+  for (const m of measurements) {
+    const px = chartMap.px(xValue(m));
+    const py = chartMap.py(Number(m.avg_v));
+    const distance = Math.hypot(px - mouseX, py - mouseY);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = m;
+    }
+  }
+
+  return best && bestDistance <= 11 ? {measurement: best, mouseX, mouseY} : null;
+}
+
+function showChartTooltip(ev) {
+  const hit = nearestMeasurementAtPointer(ev);
+  if (!hit) {
+    hideChartTooltip();
+    return;
+  }
+
+  const m = hit.measurement;
+  const positionText = m.x_cm == null ? '-' : `${Number(m.x_cm).toFixed(3)} cm`;
+  chartTooltip.innerHTML =
+    `<strong>${Number(m.rev)}회차</strong><br>` +
+    `추정 위치: ${positionText}<br>` +
+    `평균 Vpp: ${Number(m.avg_v).toFixed(3)} V<br>` +
+    `표준편차: ${Number(m.std_v || 0).toFixed(3)} V` +
+    (m.clipped ? '<br>Clipping: 의심' : '');
+
+  chartTooltip.style.display = 'block';
+  chart.style.cursor = 'pointer';
+
+  const wrapRect = chartWrap.getBoundingClientRect();
+  const tooltipRect = chartTooltip.getBoundingClientRect();
+  const gap = 12;
+  let left = hit.mouseX + gap;
+  let top = hit.mouseY + gap;
+
+  if (left + tooltipRect.width > wrapRect.width - 6) {
+    left = hit.mouseX - tooltipRect.width - gap;
+  }
+  if (top + tooltipRect.height > wrapRect.height - 6) {
+    top = hit.mouseY - tooltipRect.height - gap;
+  }
+
+  left = Math.max(6, Math.min(left, wrapRect.width - tooltipRect.width - 6));
+  top = Math.max(6, Math.min(top, wrapRect.height - tooltipRect.height - 6));
+  chartTooltip.style.left = `${left}px`;
+  chartTooltip.style.top = `${top}px`;
+}
+
+chart.addEventListener('mousemove', showChartTooltip);
+chart.addEventListener('mouseleave', hideChartTooltip);
+
+chart.addEventListener('click', ev => {
+  if (!(Number(config.distance_per_cycle_cm)>0) || !measurements.length || !chartMap) return;
+  const rect=chart.getBoundingClientRect(); const mouseX=ev.clientX-rect.left;
+  let best=null,bestD=Infinity;
+  for(const m of measurements){const d=Math.abs(chartMap.px(Number(m.x_cm))-mouseX);if(d<bestD){bestD=d;best=m;}}
+  if(!best) return;
+  const node={rev:best.rev,x_cm:Number(best.x_cm),avg_v:Number(best.avg_v)};
+  if(selectedNodes.length>=2) selectedNodes=[];
+  selectedNodes.push(node); selectedNodes.sort((a,b)=>a.x_cm-b.x_cm);
+  updateManualResult(); drawChart();
+});
+
+function updateManualResult() {
+  if (!(Number(config.distance_per_cycle_cm)>0)) { manualResult.textContent='위치 보정값을 먼저 입력하십시오.'; return; }
+  if (selectedNodes.length < 2) { manualResult.textContent=selectedNodes.length===1?`첫 마디 후보: ${selectedNodes[0].x_cm.toFixed(3)} cm. 두 번째 인접 마디를 선택하세요.`:'아직 두 마디를 선택하지 않았습니다.'; return; }
+  const dx=Math.abs(selectedNodes[1].x_cm-selectedNodes[0].x_cm), lambda=2*dx;
+  const f=Number(config.frequency_hz||0); const v=f>0?f*lambda/100:null;
+  manualResult.innerHTML=`선택 위치: <b>${selectedNodes[0].x_cm.toFixed(3)} cm</b>, <b>${selectedNodes[1].x_cm.toFixed(3)} cm</b><br>Δx = <b>${dx.toFixed(3)} cm</b> → λ = 2Δx = <span class="big">${lambda.toFixed(3)} cm</span>${v?`<br>v = fλ = <b>${v.toFixed(1)} m/s</b>`:''}<br><span class="muted">두 점을 인접 마디로 가정한 학생 계산입니다.</span>`;
+}
+function clearNodes(){selectedNodes=[];updateManualResult();drawChart();}
+
+function displayFitResult(d, restored=false) {
+  if(!d || !d.ok) {
+    fitData=null;
+    fitResult.textContent = restored
+      ? `저장된 fitting 결과 없음: ${d?.error || '계산 결과 없음'}`
+      : `Fitting 오류: ${d?.error || '계산 결과 없음'}`;
+    drawChart();
+    return;
+  }
+  fitData=d;
+  drawChart();
+  fitResult.innerHTML=`λ = <span class="big">${Number(d.wavelength_cm).toFixed(3)} cm</span><br>마디 간격 λ/2 = <b>${Number(d.node_spacing_cm).toFixed(3)} cm</b><br>R² = <b>${d.r2==null?'-':Number(d.r2).toFixed(4)}</b>${d.sound_speed_m_s?`<br>v = fλ = <b>${Number(d.sound_speed_m_s).toFixed(1)} m/s</b>`:''}<br><span class="muted">사용점 ${d.used_points}개, clipping 제외 ${d.excluded_clipped_points}개. ${restored?'실험 세트에 저장된 fitting 결과를 복원했습니다.':'보정 위치에 대한 근사 fitting입니다.'}</span>`;
+}
+
+async function runFit() {
+  fitResult.textContent='계산 중...';
+  try {
+    const r=await fetch(`/api/fit?t=${Date.now()}`); const d=await r.json();
+    if(!d.ok) throw new Error(d.error||'fit error');
+    displayFitResult(d, false);
+  } catch(e){fitData=null;fitResult.textContent='Fitting 오류: '+e;drawChart();}
+}
+
+function csvEscape(value) {
+  return '"' + String(value ?? '').replaceAll('"','""') + '"';
+}
+
+function compactNumberForFilename(value, digits=3) {
+  const n=Number(value);
+  if(!Number.isFinite(n) || n<=0) return 'unknown';
+  return n.toFixed(digits).replace(/\.?0+$/,'');
+}
+
+function experimentBaseName() {
+  const freqPart=compactNumberForFilename(config.frequency_hz,3);
+  const lengthPart=compactNumberForFilename(config.tube_length_cm,3);
+  return `standing_wave_${freqPart}Hz_${lengthPart}cm`;
+}
+
+function buildMeasurementCsv() {
+  const rows=[['cycle','estimated_position_cm','avg_peak_to_peak_v','std_peak_to_peak_v','clipped','frequency_hz','tube_length_cm','tube_type','distance_per_cycle_cm','first_measure_at_start','max_cycles','time']];
+  for(const m of measurements) rows.push([
+    m.rev,
+    m.x_cm==null?'':m.x_cm,
+    m.avg_v,
+    m.std_v,
+    m.clipped?1:0,
+    config.frequency_hz||'',
+    config.tube_length_cm||'',
+    config.tube_type||'unknown',
+    config.distance_per_cycle_cm||'',
+    config.first_measure_at_start === false ? 0 : 1,
+    config.max_cycles||'',
+    m.time||''
+  ]);
+  return rows.map(r=>r.map(csvEscape).join(',')).join('\n');
+}
+
+function downloadBlob(blob, filename) {
+  const a=document.createElement('a');
+  const url=URL.createObjectURL(blob);
+  a.href=url;
+  a.download=filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+
+
+// Minimal ZIP writer using the uncompressed STORE method. This keeps experiment export
+// self-contained and avoids requiring another CDN/library merely to save three small files.
+let zipCrc32Table = null;
+function getZipCrc32Table() {
+  if (zipCrc32Table) return zipCrc32Table;
+  zipCrc32Table = new Uint32Array(256);
+  for (let n=0;n<256;n++) {
+    let c=n;
+    for (let k=0;k<8;k++) c=(c&1) ? (0xEDB88320 ^ (c>>>1)) : (c>>>1);
+    zipCrc32Table[n]=c>>>0;
+  }
+  return zipCrc32Table;
+}
+
+function zipCrc32(bytes) {
+  const table=getZipCrc32Table();
+  let c=0xFFFFFFFF;
+  for (const b of bytes) c=table[(c^b)&0xFF] ^ (c>>>8);
+  return (c ^ 0xFFFFFFFF)>>>0;
+}
+
+function zipU16(n) {
+  n=Number(n)>>>0;
+  return new Uint8Array([n&0xFF,(n>>>8)&0xFF]);
+}
+
+function zipU32(n) {
+  n=Number(n)>>>0;
+  return new Uint8Array([n&0xFF,(n>>>8)&0xFF,(n>>>16)&0xFF,(n>>>24)&0xFF]);
+}
+
+function zipConcat(parts) {
+  const length=parts.reduce((sum,p)=>sum+p.length,0);
+  const out=new Uint8Array(length);
+  let offset=0;
+  for (const part of parts) { out.set(part,offset); offset+=part.length; }
+  return out;
+}
+
+function zipDosDateTime(date=new Date()) {
+  let year=Math.max(1980,date.getFullYear());
+  const dosTime=((date.getHours()&31)<<11)|((date.getMinutes()&63)<<5)|((Math.floor(date.getSeconds()/2))&31);
+  const dosDate=(((year-1980)&127)<<9)|(((date.getMonth()+1)&15)<<5)|(date.getDate()&31);
+  return {dosTime,dosDate};
+}
+
+function createStoredZipBlob(files) {
+  const enc=new TextEncoder();
+  const localParts=[];
+  const centralParts=[];
+  let localOffset=0;
+  const {dosTime,dosDate}=zipDosDateTime(new Date());
+
+  for (const file of files) {
+    const nameBytes=enc.encode(String(file.name));
+    const dataBytes=file.data instanceof Uint8Array ? file.data : enc.encode(String(file.data ?? ''));
+    const crc=zipCrc32(dataBytes);
+    const flags=0x0800; // UTF-8 filenames
+    const localHeader=zipConcat([
+      zipU32(0x04034b50), zipU16(20), zipU16(flags), zipU16(0),
+      zipU16(dosTime), zipU16(dosDate), zipU32(crc),
+      zipU32(dataBytes.length), zipU32(dataBytes.length),
+      zipU16(nameBytes.length), zipU16(0), nameBytes
+    ]);
+    const localRecord=zipConcat([localHeader,dataBytes]);
+    localParts.push(localRecord);
+
+    const centralHeader=zipConcat([
+      zipU32(0x02014b50), zipU16(20), zipU16(20), zipU16(flags), zipU16(0),
+      zipU16(dosTime), zipU16(dosDate), zipU32(crc),
+      zipU32(dataBytes.length), zipU32(dataBytes.length),
+      zipU16(nameBytes.length), zipU16(0), zipU16(0), zipU16(0), zipU16(0),
+      zipU32(0), zipU32(localOffset), nameBytes
+    ]);
+    centralParts.push(centralHeader);
+    localOffset+=localRecord.length;
+  }
+
+  const localData=zipConcat(localParts);
+  const centralData=zipConcat(centralParts);
+  const eocd=zipConcat([
+    zipU32(0x06054b50), zipU16(0), zipU16(0),
+    zipU16(files.length), zipU16(files.length),
+    zipU32(centralData.length), zipU32(localData.length), zipU16(0)
+  ]);
+  return new Blob([localData,centralData,eocd],{type:'application/zip'});
+}
+
+
+function getChatTranscriptRows() {
+  return [...chatMessages.querySelectorAll('.chat-row')].map(row => ({
+    timestamp: row._chatTimestamp || '',
+    role: row.dataset.role || 'system',
+    message: row._chatRawText ?? row.querySelector('.chat-bubble')?.textContent ?? '',
+    context_points: (row._chatContextPoints === '' || row._chatContextPoints == null) ? '' : Number(row._chatContextPoints),
+    model: row._chatModel || ''
+  })).filter(item => (item.role === 'user' || item.role === 'assistant') && item.message);
+}
+
+function buildChatCsv(modelName=lastChatModel) {
+  const rows=[['timestamp','role','message','model','context_points','frequency_hz','tube_length_cm','tube_type']];
+  for(const item of getChatTranscriptRows()) rows.push([
+    item.timestamp,
+    item.role,
+    item.message,
+    item.model || modelName || '',
+    item.context_points,
+    config.frequency_hz||'',
+    config.tube_length_cm||'',
+    config.tube_type||'unknown'
+  ]);
+  return rows.map(r=>r.map(csvEscape).join(',')).join('\n');
+}
+
+async function fetchLatestFitForExport() {
+  try {
+    const r=await fetch(`/api/fit?t=${Date.now()}`);
+    const d=await r.json();
+    if(d && d.ok) { fitData=d; drawChart(); }
+    return d || {ok:false,error:'빈 fitting 응답'};
+  } catch(e) {
+    return {ok:false,error:String(e?.message || e)};
+  }
+}
+
+async function fetchChatModelForExport() {
+  try {
+    const r=await fetch(`/api/chat-info?t=${Date.now()}`);
+    const d=await r.json();
+    if(d?.model) { lastChatModel=String(d.model); return lastChatModel; }
+  } catch(_) {}
+  return lastChatModel;
+}
+
+async function downloadExperimentBundle() {
+  const button=document.getElementById('downloadExperimentBundleButton');
+  if(button) button.disabled=true;
+  setSettingsMessage('측정 데이터·챗봇 대화·fitting 결과를 묶는 중입니다...');
+  try {
+    const [fitResult, modelName] = await Promise.all([fetchLatestFitForExport(), fetchChatModelForExport()]);
+    const base=experimentBaseName();
+    const measurementCsv=buildMeasurementCsv();
+    const chatCsv=buildChatCsv(modelName);
+    const fitJson=JSON.stringify({
+      schema_version: '1.0',
+      exported_at: new Date().toISOString(),
+      experiment: {
+        frequency_hz: Number(config.frequency_hz||0),
+        tube_length_cm: Number(config.tube_length_cm||0),
+        tube_type: config.tube_type||'unknown',
+        distance_per_cycle_cm: Number(config.distance_per_cycle_cm||0),
+        first_measure_at_start: config.first_measure_at_start !== false,
+        max_cycles: Number(config.max_cycles||0),
+        measurement_points: measurements.length,
+        data_mode: config.data_mode||'live'
+      },
+      fitting: fitResult
+    }, null, 2);
+
+    const blob=createStoredZipBlob([
+      {name:`${base}.csv`, data:'\ufeff'+measurementCsv},
+      {name:`${base}_chat.csv`, data:'\ufeff'+chatCsv},
+      {name:`${base}_fit.json`, data:fitJson}
+    ]);
+    downloadBlob(blob, `${base}_experiment.zip`);
+
+    const chatCount=getChatTranscriptRows().length;
+    const fitStatus=fitResult?.ok ? `fitting λ=${Number(fitResult.wavelength_cm).toFixed(3)} cm` : `fitting 결과 없음 (${fitResult?.error || '계산 불가'})`;
+    setSettingsMessage(`실험 세트를 ZIP으로 저장했습니다. 측정점 ${measurements.length}개 · 대화 메시지 ${chatCount}개 · ${fitStatus}`);
+  } catch(e) {
+    setSettingsMessage('실험 세트 저장 오류: '+(e?.message || e), true);
+  } finally {
+    if(button) button.disabled=false;
+  }
+}
+
+function parseCsvText(text) {
+  text = String(text || '').replace(/^\uFEFF/, '');
+  const rows=[]; let row=[], cell='', quoted=false;
+  for(let i=0;i<text.length;i++) {
+    const ch=text[i];
+    if(quoted) {
+      if(ch==='"' && text[i+1]==='"') { cell+='"'; i++; }
+      else if(ch==='"') quoted=false;
+      else cell+=ch;
+    } else {
+      if(ch==='"') quoted=true;
+      else if(ch===',') { row.push(cell); cell=''; }
+      else if(ch==='\n') { row.push(cell); rows.push(row); row=[]; cell=''; }
+      else if(ch!=='\r') cell+=ch;
+    }
+  }
+  if(cell!=='' || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(v => String(v).trim() !== ''));
+}
+
+function median(values) {
+  const a=values.filter(Number.isFinite).sort((x,y)=>x-y);
+  if(!a.length) return 0;
+  const m=Math.floor(a.length/2);
+  return a.length%2 ? a[m] : (a[m-1]+a[m])/2;
+}
+
+function csvDatasetFromRows(csvRows) {
+  if(csvRows.length < 2) throw new Error('CSV에 측정 데이터가 없습니다.');
+  const headers=csvRows[0].map(v=>String(v).trim().toLowerCase());
+  const idx=(...names)=>{ for(const n of names){ const i=headers.indexOf(n); if(i>=0)return i; } return -1; };
+  const iCycle=idx('cycle','rev','회차');
+  const iX=idx('estimated_position_cm','x_cm','position_cm');
+  const iAvg=idx('avg_peak_to_peak_v','avg_v','vpp_mean_v');
+  const iStd=idx('std_peak_to_peak_v','std_v','vpp_sd_v');
+  const iClip=idx('clipped','clipping');
+  const iFreq=idx('frequency_hz','frequency');
+  const iTubeLength=idx('tube_length_cm','pipe_length_cm');
+  const iTubeType=idx('tube_type','pipe_type');
+  const iDx=idx('distance_per_cycle_cm');
+  const iFirst=idx('first_measure_at_start');
+  const iMax=idx('max_cycles');
+  const iTime=idx('time','saved_at');
+  if(iCycle<0 || iAvg<0) throw new Error('필수 열 cycle과 avg_peak_to_peak_v를 찾을 수 없습니다.');
+
+  const byRev=new Map();
+  for(let r=1;r<csvRows.length;r++) {
+    const src=csvRows[r];
+    const rev=Number(src[iCycle]);
+    const avg=Number(src[iAvg]);
+    if(!Number.isInteger(rev) || rev<1 || !Number.isFinite(avg)) continue;
+    const x=iX>=0 && src[iX]!=='' ? Number(src[iX]) : null;
+    const std=iStd>=0 && Number.isFinite(Number(src[iStd])) ? Math.max(0,Number(src[iStd])) : 0;
+    const clipText=iClip>=0 ? String(src[iClip]||'').trim().toLowerCase() : '';
+    const clipped=['1','true','yes','y','의심'].includes(clipText);
+    byRev.set(rev,{rev,x_cm:Number.isFinite(x)?x:null,avg_v:avg,std_v:std,clipped,time:iTime>=0?String(src[iTime]||''):''});
+  }
+  const data=Array.from(byRev.values()).sort((a,b)=>a.rev-b.rev);
+  if(!data.length) throw new Error('유효한 측정 행을 찾지 못했습니다.');
+  if(data.length>1000) throw new Error('CSV 측정점은 최대 1000개까지 불러올 수 있습니다.');
+
+  const firstDataRow=csvRows.slice(1).find(r=>Number.isInteger(Number(r[iCycle])) && Number.isFinite(Number(r[iAvg]))) || [];
+  let frequency=iFreq>=0 ? Number(firstDataRow[iFreq]) : Number(config.frequency_hz||0);
+  if(!Number.isFinite(frequency)) frequency=0;
+  let tubeLength=iTubeLength>=0 ? Number(firstDataRow[iTubeLength]) : 0;
+  if(!Number.isFinite(tubeLength) || tubeLength<0) tubeLength=0;
+  let tubeType=iTubeType>=0 ? String(firstDataRow[iTubeType]||'unknown').trim().toLowerCase() : 'unknown';
+  if(!['open','one_end_closed','unknown'].includes(tubeType)) tubeType='unknown';
+  let dx=iDx>=0 ? Number(firstDataRow[iDx]) : 0;
+  if(!Number.isFinite(dx) || dx<=0) {
+    const slopes=[];
+    for(let i=1;i<data.length;i++) {
+      if(data[i].x_cm==null || data[i-1].x_cm==null) continue;
+      const dr=data[i].rev-data[i-1].rev;
+      if(dr>0) slopes.push((data[i].x_cm-data[i-1].x_cm)/dr);
+    }
+    dx=Math.abs(median(slopes));
+  }
+  let firstAtStart;
+  if(iFirst>=0 && firstDataRow[iFirst]!==undefined && firstDataRow[iFirst]!=='') firstAtStart = Number(firstDataRow[iFirst]) !== 0;
+  else firstAtStart = data[0].x_cm != null && Math.abs(data[0].x_cm) < 1e-9;
+  let maxCycles=iMax>=0 ? Number(firstDataRow[iMax]) : 0;
+  const maxRev=Math.max(...data.map(d=>d.rev));
+  if(!Number.isInteger(maxCycles) || maxCycles<maxRev) maxCycles=maxRev;
+  maxCycles=Math.min(1000,Math.max(1,maxCycles));
+  return {data,frequency_hz:Math.max(0,frequency),tube_length_cm:tubeLength,tube_type:tubeType,distance_per_cycle_cm:Math.max(0,dx||0),first_measure_at_start:firstAtStart,max_cycles:maxCycles};
+}
+
+async function importParsedMeasurementDataset(parsed, sourceLabel='CSV') {
+  const beginParams=new URLSearchParams({
+    frequency_hz:String(parsed.frequency_hz),
+    tube_length_cm:String(parsed.tube_length_cm),
+    tube_type:parsed.tube_type,
+    distance_per_cycle_cm:String(parsed.distance_per_cycle_cm),
+    max_cycles:String(parsed.max_cycles),
+    first_measure_at_start:parsed.first_measure_at_start?'1':'0',
+    total_rows:String(parsed.data.length),
+    t:String(Date.now())
+  });
+  let r=await fetch(`/api/import-begin?${beginParams.toString()}`); let d=await r.json();
+  if(!d.ok) throw new Error(d.error||`${sourceLabel} import begin error`);
+
+  const chunkSize=20;
+  for(let i=0;i<parsed.data.length;i+=chunkSize) {
+    const payload=JSON.stringify(parsed.data.slice(i,i+chunkSize));
+    const params=new URLSearchParams({payload,t:String(Date.now())});
+    r=await fetch(`/api/import-chunk?${params.toString()}`); d=await r.json();
+    if(!d.ok) throw new Error(d.error||`${sourceLabel} import chunk error`);
+    setSettingsMessage(`${sourceLabel} 측정 데이터 불러오는 중... ${Math.min(i+chunkSize,parsed.data.length)} / ${parsed.data.length}개`);
+  }
+  r=await fetch(`/api/import-commit?t=${Date.now()}`); d=await r.json();
+  if(!d.ok) throw new Error(d.error||`${sourceLabel} import commit error`);
+  config=d.config||config;
+  measurements=normalizeMeasurements(d.measurements);
+  selectedNodes=[]; fitData=null; configInputsDirty=false;
+  syncConfigInputsFromServer(true);
+  updateStatus(d.state); renderTable(); drawChart(); updateManualResult();
+  return d;
+}
+
+
+async function inflateRawZipBytes(compressedBytes) {
+  if(typeof DecompressionStream !== 'function') {
+    throw new Error('이 브라우저는 압축된 ZIP(DEFLATE) 해제를 지원하지 않습니다. 이 앱에서 저장한 실험 ZIP을 사용하십시오.');
+  }
+  const stream=new Blob([compressedBytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function readZipEntries(arrayBuffer) {
+  const bytes=new Uint8Array(arrayBuffer);
+  const view=new DataView(arrayBuffer);
+  const decoder=new TextDecoder('utf-8');
+  const minEocd=Math.max(0,bytes.length-22-65535);
+  let eocd=-1;
+  for(let i=bytes.length-22;i>=minEocd;i--) {
+    if(view.getUint32(i,true)===0x06054b50) { eocd=i; break; }
+  }
+  if(eocd<0) throw new Error('올바른 ZIP 파일이 아니거나 중앙 디렉터리를 찾을 수 없습니다.');
+  const totalEntries=view.getUint16(eocd+10,true);
+  const centralOffset=view.getUint32(eocd+16,true);
+  const entries=new Map();
+  let pos=centralOffset;
+  for(let n=0;n<totalEntries;n++) {
+    if(pos+46>bytes.length || view.getUint32(pos,true)!==0x02014b50) throw new Error('ZIP 중앙 디렉터리가 손상되었습니다.');
+    const flags=view.getUint16(pos+8,true);
+    const method=view.getUint16(pos+10,true);
+    const crc=view.getUint32(pos+16,true);
+    const compressedSize=view.getUint32(pos+20,true);
+    const uncompressedSize=view.getUint32(pos+24,true);
+    const nameLen=view.getUint16(pos+28,true);
+    const extraLen=view.getUint16(pos+30,true);
+    const commentLen=view.getUint16(pos+32,true);
+    const localOffset=view.getUint32(pos+42,true);
+    const name=decoder.decode(bytes.slice(pos+46,pos+46+nameLen));
+    if(flags&0x0001) throw new Error(`암호화된 ZIP 항목은 불러올 수 없습니다: ${name}`);
+    if(localOffset+30>bytes.length || view.getUint32(localOffset,true)!==0x04034b50) throw new Error(`ZIP 항목 헤더가 손상되었습니다: ${name}`);
+    const localNameLen=view.getUint16(localOffset+26,true);
+    const localExtraLen=view.getUint16(localOffset+28,true);
+    const dataStart=localOffset+30+localNameLen+localExtraLen;
+    const compressed=bytes.slice(dataStart,dataStart+compressedSize);
+    let data;
+    if(method===0) data=compressed;
+    else if(method===8) data=await inflateRawZipBytes(compressed);
+    else throw new Error(`지원하지 않는 ZIP 압축 방식(method ${method})입니다: ${name}`);
+    if(data.length!==uncompressedSize) throw new Error(`ZIP 항목 크기가 맞지 않습니다: ${name}`);
+    if(zipCrc32(data)!==crc) throw new Error(`ZIP 항목 CRC가 맞지 않습니다: ${name}`);
+    if(!name.endsWith('/')) entries.set(name,data);
+    pos+=46+nameLen+extraLen+commentLen;
+  }
+  return entries;
+}
+
+function decodeZipText(bytes) {
+  return new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
+}
+
+function parseChatCsvText(text) {
+  const rows=parseCsvText(text);
+  if(rows.length<1) return [];
+  const headers=rows[0].map(v=>String(v).trim().toLowerCase());
+  const idx=(name)=>headers.indexOf(name);
+  const iTime=idx('timestamp'), iRole=idx('role'), iMsg=idx('message'), iModel=idx('model'), iContext=idx('context_points');
+  if(iRole<0 || iMsg<0) throw new Error('대화 CSV에서 role/message 열을 찾을 수 없습니다.');
+  const out=[];
+  for(const row of rows.slice(1)) {
+    const role=String(row[iRole]||'').trim().toLowerCase();
+    const message=String(row[iMsg]||'');
+    if(!['user','assistant'].includes(role) || !message) continue;
+    const cp=iContext>=0 && Number.isFinite(Number(row[iContext])) ? Number(row[iContext]) : '';
+    out.push({
+      timestamp:iTime>=0?String(row[iTime]||''):'',
+      role,
+      message,
+      model:iModel>=0?String(row[iModel]||''):'',
+      context_points:cp
+    });
+  }
+  return out;
+}
+
+async function restoreChatTranscript(rows) {
+  const transcript=Array.isArray(rows)?rows:[];
+  try {
+    const params=new URLSearchParams({session_id:chatSessionId,t:String(Date.now())});
+    await fetch(`/api/chat-clear?${params.toString()}`);
+  } catch(_) {}
+
+  chatMessages.innerHTML='';
+  for(const item of transcript) {
+    addChatMessage(item.role,item.message,false,item.timestamp||null,item.context_points??'',item.model||'');
+    if(item.model) lastChatModel=item.model;
+  }
+  if(!transcript.length) addChatMessage('system','저장된 챗봇 대화가 없습니다.',false);
+  saveChatMessagesToSession();
+
+  // Restore only Q/A text to the server-side short history. Experiment snapshots were never
+  // saved in the chat CSV, so restoring these messages cannot duplicate measurement context.
+  const recent=transcript.slice(-12);
+  for(const item of recent) {
+    const params=new URLSearchParams({
+      session_id:chatSessionId,
+      role:item.role,
+      content:item.message,
+      t:String(Date.now())
+    });
+    const r=await fetch(`/api/chat-restore-message?${params.toString()}`);
+    const d=await r.json();
+    if(!d.ok) throw new Error(d.error||'대화 history 복원 실패');
+  }
+  chatModelText.textContent=`${lastChatModel} · 측정점 ${measurements.length}개`;
+}
+
+function compactFitForServer(fit) {
+  if(!fit || typeof fit!=='object') return {ok:false,error:'저장된 fitting 결과 없음'};
+  const keys=['ok','error','wavelength_cm','node_spacing_cm','baseline_v','amplitude_v','phase_rad','r2','frequency_hz','sound_speed_m_s','used_points','excluded_clipped_points','model'];
+  const out={};
+  for(const key of keys) if(Object.prototype.hasOwnProperty.call(fit,key)) out[key]=fit[key];
+  return out;
+}
+
+async function restoreFitRecord(fitObject) {
+  const fit=(fitObject && typeof fitObject==='object') ? fitObject : {ok:false,error:'저장된 fitting 결과 없음'};
+  displayFitResult(fit,true);
+  const payload=JSON.stringify(compactFitForServer(fit));
+  const params=new URLSearchParams({payload,t:String(Date.now())});
+  const r=await fetch(`/api/fit-restore?${params.toString()}`);
+  const d=await r.json();
+  if(!d.ok) throw new Error(d.error||'fitting cache 복원 실패');
+}
+
+async function importExperimentBundle(file) {
+  if(!file) return;
+  bundleImportInFlight=true;
+  importBundleButton.disabled=true;
+  setSettingsMessage(`실험 세트 '${file.name}'을 읽는 중입니다...`);
+  try {
+    const entries=await readZipEntries(await file.arrayBuffer());
+    const names=[...entries.keys()];
+    const measurementName=names.find(n=>/\.csv$/i.test(n) && !/_chat\.csv$/i.test(n));
+    const chatName=names.find(n=>/_chat\.csv$/i.test(n));
+    const fitName=names.find(n=>/_fit\.json$/i.test(n));
+    if(!measurementName || !chatName || !fitName) {
+      throw new Error('실험 세트 ZIP에는 측정 CSV, _chat.csv, _fit.json 세 파일이 모두 있어야 합니다.');
+    }
+
+    const measurementText=decodeZipText(entries.get(measurementName));
+    const parsed=csvDatasetFromRows(parseCsvText(measurementText));
+    await importParsedMeasurementDataset(parsed,'실험 세트');
+
+    const chatRows=parseChatCsvText(decodeZipText(entries.get(chatName)));
+    await restoreChatTranscript(chatRows);
+
+    let fitRecord;
+    try {
+      const fitDoc=JSON.parse(decodeZipText(entries.get(fitName)));
+      fitRecord=(fitDoc && typeof fitDoc==='object' && 'fitting' in fitDoc) ? fitDoc.fitting : fitDoc;
+    } catch(e) {
+      throw new Error('fitting JSON 해석 실패: '+(e?.message||e));
+    }
+    await restoreFitRecord(fitRecord);
+
+    setSettingsMessage(`실험 세트를 복원했습니다. 측정점 ${measurements.length}개 · 대화 메시지 ${chatRows.length}개 · ${fitRecord?.ok?'저장된 fitting 결과 복원':'저장된 fitting 결과 없음'}. 현재는 불러온 데이터 분석 모드입니다.`);
+  } catch(e) {
+    try { await fetch(`/api/import-cancel?t=${Date.now()}`); } catch(_) {}
+    setSettingsMessage('실험 세트 불러오기 오류: '+(e?.message||e),true);
+  } finally {
+    bundleFileInput.value='';
+    bundleImportInFlight=false;
+    importBundleButton.disabled=false;
+  }
+}
+
+
+bundleFileInput.addEventListener('change', () => importExperimentBundle(bundleFileInput.files?.[0]));
+
+
+function normalizeLatexDelimiters(text) {
+  // Marked treats backslash-parentheses as Markdown escapes. Convert them to dollar
+  // delimiters before Markdown parsing so MathJax receives intact TeX.
+  return String(text || '')
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_, body) => `$$${body}$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_, body) => `$${body}$`);
+}
+
+function safeMarkdownHtml(text) {
+  const source = normalizeLatexDelimiters(text);
+  // Never allow raw HTML from an LLM response to become executable markup. Escaping
+  // <, > and & leaves normal Markdown and TeX syntax intact.
+  const escaped = source
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+  try {
+    if (window.marked && typeof window.marked.parse === 'function') {
+      return window.marked.parse(escaped, {gfm:true, breaks:true});
+    }
+  } catch (e) {
+    console.warn('Markdown render failed:', e);
+  }
+  return escaped.replaceAll('\n', '<br>');
+}
+
+function typesetChatMath(element) {
+  if (!element) return;
+  const run = () => {
+    if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+      window.MathJax.typesetPromise([element]).catch(err => console.warn('MathJax render failed:', err));
+    }
+  };
+  // MathJax may still be loading on the first restored chat message. Its startup pass
+  // will typeset existing DOM; this delayed retry covers messages added around startup.
+  if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') run();
+  else setTimeout(run, 900);
+}
+
+function setChatMessageContent(row, text) {
+  if (!row) return;
+  const role = row.dataset.role || 'system';
+  const bubble = row.querySelector('.chat-bubble');
+  if (!bubble) return;
+  const rawText = String(text || '');
+  row._chatRawText = rawText;
+  if (role === 'assistant') {
+    bubble.innerHTML = safeMarkdownHtml(rawText);
+    typesetChatMath(bubble);
+  } else {
+    bubble.textContent = rawText;
+  }
+}
+
+function saveChatMessagesToSession() {
+  // Keep the complete user-visible transcript in the browser.
+  // Only the server-side LLM context is limited to the most recent 6 turns.
+  const rows = [...chatMessages.querySelectorAll('.chat-row')].map(row => ({
+    role: row.dataset.role || 'system',
+    timestamp: row._chatTimestamp || '',
+    context_points: (row._chatContextPoints === '' || row._chatContextPoints == null) ? '' : Number(row._chatContextPoints),
+    model: row._chatModel || '',
+    // Store the original Markdown/LaTeX source, not MathJax's rendered DOM text.
+    text: row._chatRawText ?? row.querySelector('.chat-bubble')?.textContent ?? ''
+  })).filter(item => item.text);
+  sessionStorage.setItem(CHAT_MESSAGES_KEY, JSON.stringify(rows));
+}
+
+function addChatMessage(role, text, save=true, timestamp=null, contextPoints='', model='') {
+  const row = document.createElement('div');
+  row.className = `chat-row ${role}`;
+  row.dataset.role = role;
+  row._chatTimestamp = timestamp || new Date().toISOString();
+  row._chatContextPoints = contextPoints;
+  row._chatModel = model || '';
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble';
+  row.appendChild(bubble);
+  setChatMessageContent(row, text);
+  chatMessages.appendChild(row);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  if (save) saveChatMessagesToSession();
+  return row;
+}
+
+function loadSavedChatMessages() {
+  chatMessages.innerHTML = '';
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(CHAT_MESSAGES_KEY) || '[]');
+    if (Array.isArray(saved) && saved.length) {
+      for (const item of saved) addChatMessage(item.role || 'system', item.text || '', false, item.timestamp || null, item.context_points ?? '', item.model || '');
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      return;
+    }
+  } catch (_) {}
+  addChatMessage('system', '현재 측정 데이터와 Python fitting 결과를 바탕으로 정상파 실험에 대해 질문할 수 있습니다.', true);
+}
+
+function openChat() {
+  chatPanel.classList.add('open');
+  chatInput.focus();
+  checkChatInfo();
+}
+
+function closeChat() {
+  chatPanel.classList.remove('open');
+}
+
+async function checkChatInfo() {
+  try {
+    const r = await fetch(`/api/chat-info?t=${Date.now()}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'chat info error');
+    lastChatModel = d.model || lastChatModel;
+    chatModelText.textContent = d.ready
+      ? `${d.model} · 실험 데이터 연결됨`
+      : `${d.model} · API key/모델 연결 확인 필요`;
+  } catch (e) {
+    chatModelText.textContent = '챗봇 상태 확인 실패';
+  }
+}
+
+async function sendChatQuestion(questionOverride=null) {
+  if (chatBusy) return;
+  const question = String(questionOverride ?? chatInput.value).trim();
+  if (!question) return;
+
+  chatBusy = true;
+  chatSendButton.disabled = true;
+  chatInput.disabled = true;
+  const userRow = addChatMessage('user', question);
+  chatInput.value = '';
+  const pending = addChatMessage('assistant', 'Gemini가 현재 실험 데이터와 fitting 결과를 확인하는 중입니다...', false);
+
+  try {
+    const params = new URLSearchParams({question, session_id: chatSessionId, t: String(Date.now())});
+    const r = await fetch(`/api/chat?${params.toString()}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'chat error');
+    setChatMessageContent(pending, d.answer);
+    const contextPoints = Number(d.context_points || 0);
+    userRow._chatContextPoints = contextPoints;
+    pending._chatContextPoints = contextPoints;
+    userRow._chatModel = d.model || lastChatModel;
+    pending._chatModel = d.model || lastChatModel;
+    lastChatModel = d.model || lastChatModel;
+    chatModelText.textContent = `${lastChatModel} · 측정점 ${d.context_points}개`;
+    saveChatMessagesToSession();
+  } catch (e) {
+    pending.className = 'chat-row system';
+    pending.dataset.role = 'system';
+    setChatMessageContent(pending, `챗봇 오류: ${e.message || e}`);
+    saveChatMessagesToSession();
+  } finally {
+    chatBusy = false;
+    chatSendButton.disabled = false;
+    chatInput.disabled = false;
+    chatInput.focus();
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+}
+
+async function clearChatConversation() {
+  if (chatBusy) return;
+  try {
+    const params = new URLSearchParams({session_id: chatSessionId, t: String(Date.now())});
+    await fetch(`/api/chat-clear?${params.toString()}`);
+  } catch (_) {}
+  sessionStorage.removeItem(CHAT_MESSAGES_KEY);
+  chatMessages.innerHTML = '';
+  addChatMessage('system', '대화를 지웠습니다. 현재 실험 데이터는 지워지지 않습니다.', true);
+}
+
+chatLauncher.addEventListener('click', () => {
+  if (chatPanel.classList.contains('open')) closeChat(); else openChat();
+});
+chatCloseButton.addEventListener('click', closeChat);
+chatClearButton.addEventListener('click', clearChatConversation);
+chatSendButton.addEventListener('click', () => sendChatQuestion());
+chatInput.addEventListener('keydown', ev => {
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    ev.preventDefault();
+    sendChatQuestion();
+  }
+});
+document.querySelectorAll('[data-chat-question]').forEach(btn => {
+  btn.addEventListener('click', () => sendChatQuestion(btn.dataset.chatQuestion));
+});
+
+loadSavedChatMessages();
+checkChatInfo();
+
+window.addEventListener('resize',drawChart);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && requestedJogDirection !== 0) {
+    stopJog(false);
+  }
+});
+
+window.addEventListener('pagehide', () => {
+  requestedJogDirection = 0;
+  if (jogHeartbeatTimer) clearInterval(jogHeartbeatTimer);
+  // keepalive gives the stop request a chance to leave during page navigation;
+  // the MCU watchdog is the final safety fallback if it does not.
+  fetch(`/api/jog?direction=0&detail=0&t=${Date.now()}`, {keepalive:true}).catch(() => {});
+});
+loadData({syncInputs:true}); ensurePolling();
+</script>
+</body>
+</html>

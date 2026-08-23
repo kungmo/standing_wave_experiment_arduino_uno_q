@@ -1,0 +1,9 @@
+name: Open Standing Wave Lab AI
+description: UNO Q standing-wave measurement with deterministic fitting and a CloudLLM/LangChain Gemini experiment chatbot with optimized context
+ports: []
+bricks:
+- arduino:web_ui: {}
+- arduino:cloud_llm:
+    variables:
+      API_KEY: ""
+icon: 📈
