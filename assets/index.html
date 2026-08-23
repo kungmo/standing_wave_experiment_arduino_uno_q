@@ -117,6 +117,7 @@
       <div class="field"><label for="frequency">공명 주파수 f</label><input id="frequency" type="number" min="0" step="0.1" placeholder="예: 980"><span>Hz</span></div>
       <div class="field"><label for="tubeLength">관 길이</label><input id="tubeLength" type="number" min="0" step="0.1" placeholder="예: 90"><span>cm</span></div>
       <div class="field"><label for="tubeType">관 종류</label><select id="tubeType"><option value="open">개관 (양쪽 열림)</option><option value="one_end_closed">한쪽이 막힌 관</option><option value="unknown">미지정</option></select></div>
+      <div class="field"><label for="temperature">실험실 온도</label><input id="temperature" type="number" min="-50" max="80" step="0.1" placeholder="예: 27"><span>℃</span></div>
       <div class="field"><label for="distance">1회 이동당 추정 거리</label><input id="distance" type="number" min="0" step="0.001" placeholder="자로 보정"><span>cm</span></div>
       <div class="field"><label for="maxCycles">마지막 회차</label><input id="maxCycles" type="number" min="1" max="1000" step="1" value="110"><span>회</span></div>
       <div class="field"><label for="firstMeasureAtStart">첫 데이터 위치</label><select id="firstMeasureAtStart"><option value="1">시작 위치 (0 cm)</option><option value="0">1회 이동 후</option></select></div>
@@ -244,6 +245,7 @@ const chartTooltip = document.getElementById('chartTooltip');
 const frequencyInput = document.getElementById('frequency');
 const tubeLengthInput = document.getElementById('tubeLength');
 const tubeTypeInput = document.getElementById('tubeType');
+const temperatureInput = document.getElementById('temperature');
 const distanceInput = document.getElementById('distance');
 const maxCyclesInput = document.getElementById('maxCycles');
 const firstMeasureAtStartInput = document.getElementById('firstMeasureAtStart');
@@ -277,7 +279,7 @@ const chatSendButton = document.getElementById('chatSendButton');
 const chatModelText = document.getElementById('chatModelText');
 
 let measurements = [];
-let config = {frequency_hz: 0, tube_length_cm: 0, tube_type: 'open', distance_per_cycle_cm: 0, max_cycles: 110, first_measure_at_start: true, data_mode: 'live'};
+let config = {frequency_hz: 0, tube_length_cm: 0, tube_type: 'open', temperature_c: null, distance_per_cycle_cm: 0, max_cycles: 110, first_measure_at_start: true, data_mode: 'live'};
 let selectedNodes = [];
 let fitData = null;
 let latestState = null;
@@ -300,18 +302,19 @@ if (!chatSessionId) {
   sessionStorage.setItem(CHAT_SESSION_KEY, chatSessionId);
 }
 
-[frequencyInput, tubeLengthInput, tubeTypeInput, distanceInput, maxCyclesInput, firstMeasureAtStartInput].forEach(input => {
+[frequencyInput, tubeLengthInput, tubeTypeInput, temperatureInput, distanceInput, maxCyclesInput, firstMeasureAtStartInput].forEach(input => {
   input.addEventListener('input', () => {
     configInputsDirty = true;
   });
 });
 
 function syncConfigInputsFromServer(force=false) {
-  const editing = document.activeElement === frequencyInput || document.activeElement === tubeLengthInput || document.activeElement === tubeTypeInput || document.activeElement === distanceInput || document.activeElement === maxCyclesInput || document.activeElement === firstMeasureAtStartInput;
+  const editing = document.activeElement === frequencyInput || document.activeElement === tubeLengthInput || document.activeElement === tubeTypeInput || document.activeElement === temperatureInput || document.activeElement === distanceInput || document.activeElement === maxCyclesInput || document.activeElement === firstMeasureAtStartInput;
   if (!force && (editing || configInputsDirty)) return;
   frequencyInput.value = Number(config.frequency_hz) > 0 ? config.frequency_hz : '';
   tubeLengthInput.value = Number(config.tube_length_cm) > 0 ? config.tube_length_cm : '';
   tubeTypeInput.value = ['open','one_end_closed','unknown'].includes(config.tube_type) ? config.tube_type : 'unknown';
+  temperatureInput.value = (config.temperature_c !== null && config.temperature_c !== undefined && config.temperature_c !== '' && Number.isFinite(Number(config.temperature_c))) ? config.temperature_c : '';
   distanceInput.value = Number(config.distance_per_cycle_cm) > 0 ? config.distance_per_cycle_cm : '';
   maxCyclesInput.value = Number(config.max_cycles) > 0 ? Math.round(Number(config.max_cycles)) : 110;
   firstMeasureAtStartInput.value = config.first_measure_at_start === false ? '0' : '1';
@@ -528,6 +531,12 @@ async function saveConfig() {
   const f = Math.max(0, Number(frequencyInput.value || 0));
   const tubeLength = Math.max(0, Number(tubeLengthInput.value || 0));
   const tubeType = ['open','one_end_closed','unknown'].includes(tubeTypeInput.value) ? tubeTypeInput.value : 'unknown';
+  const temperatureText = String(temperatureInput.value || '').trim();
+  const temperature = temperatureText === '' ? null : Number(temperatureText);
+  if (temperature !== null && (!Number.isFinite(temperature) || temperature < -50 || temperature > 80)) {
+    setSettingsMessage('실험실 온도는 -50~80 ℃ 범위로 입력하거나 비워 두십시오.', true);
+    return false;
+  }
   const dx = Math.max(0, Number(distanceInput.value || 0));
   const maxCycles = Number(maxCyclesInput.value);
   const firstAtStart = firstMeasureAtStartInput.value === '1' ? 1 : 0;
@@ -536,7 +545,7 @@ async function saveConfig() {
     return false;
   }
   try {
-    const params = new URLSearchParams({frequency_hz:String(f), tube_length_cm:String(tubeLength), tube_type:tubeType, distance_per_cycle_cm:String(dx), max_cycles:String(maxCycles), first_measure_at_start:String(firstAtStart), t:String(Date.now())});
+    const params = new URLSearchParams({frequency_hz:String(f), tube_length_cm:String(tubeLength), tube_type:tubeType, temperature_c:temperature===null?'':String(temperature), distance_per_cycle_cm:String(dx), max_cycles:String(maxCycles), first_measure_at_start:String(firstAtStart), t:String(Date.now())});
     const r = await fetch(`/api/config?${params.toString()}`);
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'config error');
@@ -551,7 +560,8 @@ async function saveConfig() {
     fitResult.textContent = '설정이 바뀌어 fitting 결과를 지웠습니다.';
     const savedTarget = config.data_mode === 'imported' ? '불러온 데이터 분석 설정을 저장했습니다.' : '실험 설정을 UNO Q에 저장했습니다.';
     const lengthText = Number(config.tube_length_cm || 0) > 0 ? `${Number(config.tube_length_cm).toFixed(1)} cm` : '미입력';
-    setSettingsMessage(`${savedTarget} 공명 주파수 ${Number(config.frequency_hz || 0).toFixed(1)} Hz · 관 ${lengthText}, ${tubeTypeLabel(config.tube_type)} · 1회 이동 ${Number(config.distance_per_cycle_cm || 0).toFixed(3)} cm · 마지막 회차 ${Math.round(Number(config.max_cycles || maxCycles))}회 · 첫 데이터 ${config.first_measure_at_start === false ? '1회 이동 후' : '시작 위치(0 cm)'}`);
+    const temperatureSavedText = (config.temperature_c !== null && config.temperature_c !== undefined && config.temperature_c !== '') ? `${Number(config.temperature_c).toFixed(1)} ℃` : '미입력';
+    setSettingsMessage(`${savedTarget} 공명 주파수 ${Number(config.frequency_hz || 0).toFixed(1)} Hz · 관 ${lengthText}, ${tubeTypeLabel(config.tube_type)} · 온도 ${temperatureSavedText} · 1회 이동 ${Number(config.distance_per_cycle_cm || 0).toFixed(3)} cm · 마지막 회차 ${Math.round(Number(config.max_cycles || maxCycles))}회 · 첫 데이터 ${config.first_measure_at_start === false ? '1회 이동 후' : '시작 위치(0 cm)'}`);
     return true;
   } catch (e) { setSettingsMessage('설정 저장 오류: ' + e, true); return false; }
 }
@@ -818,7 +828,7 @@ function experimentBaseName() {
 }
 
 function buildMeasurementCsv() {
-  const rows=[['cycle','estimated_position_cm','avg_peak_to_peak_v','std_peak_to_peak_v','clipped','frequency_hz','tube_length_cm','tube_type','distance_per_cycle_cm','first_measure_at_start','max_cycles','time']];
+  const rows=[['cycle','estimated_position_cm','avg_peak_to_peak_v','std_peak_to_peak_v','clipped','frequency_hz','tube_length_cm','tube_type','temperature_c','distance_per_cycle_cm','first_measure_at_start','max_cycles','time']];
   for(const m of measurements) rows.push([
     m.rev,
     m.x_cm==null?'':m.x_cm,
@@ -828,6 +838,7 @@ function buildMeasurementCsv() {
     config.frequency_hz||'',
     config.tube_length_cm||'',
     config.tube_type||'unknown',
+    config.temperature_c==null?'':config.temperature_c,
     config.distance_per_cycle_cm||'',
     config.first_measure_at_start === false ? 0 : 1,
     config.max_cycles||'',
@@ -948,7 +959,7 @@ function getChatTranscriptRows() {
 }
 
 function buildChatCsv(modelName=lastChatModel) {
-  const rows=[['timestamp','role','message','model','context_points','frequency_hz','tube_length_cm','tube_type']];
+  const rows=[['timestamp','role','message','model','context_points','frequency_hz','tube_length_cm','tube_type','temperature_c']];
   for(const item of getChatTranscriptRows()) rows.push([
     item.timestamp,
     item.role,
@@ -957,7 +968,8 @@ function buildChatCsv(modelName=lastChatModel) {
     item.context_points,
     config.frequency_hz||'',
     config.tube_length_cm||'',
-    config.tube_type||'unknown'
+    config.tube_type||'unknown',
+    config.temperature_c==null?'':config.temperature_c
   ]);
   return rows.map(r=>r.map(csvEscape).join(',')).join('\n');
 }
@@ -998,6 +1010,7 @@ async function downloadExperimentBundle() {
         frequency_hz: Number(config.frequency_hz||0),
         tube_length_cm: Number(config.tube_length_cm||0),
         tube_type: config.tube_type||'unknown',
+        temperature_c: config.temperature_c==null?null:Number(config.temperature_c),
         distance_per_cycle_cm: Number(config.distance_per_cycle_cm||0),
         first_measure_at_start: config.first_measure_at_start !== false,
         max_cycles: Number(config.max_cycles||0),
@@ -1063,6 +1076,7 @@ function csvDatasetFromRows(csvRows) {
   const iFreq=idx('frequency_hz','frequency');
   const iTubeLength=idx('tube_length_cm','pipe_length_cm');
   const iTubeType=idx('tube_type','pipe_type');
+  const iTemperature=idx('temperature_c','temperature','room_temperature_c');
   const iDx=idx('distance_per_cycle_cm');
   const iFirst=idx('first_measure_at_start');
   const iMax=idx('max_cycles');
@@ -1092,6 +1106,11 @@ function csvDatasetFromRows(csvRows) {
   if(!Number.isFinite(tubeLength) || tubeLength<0) tubeLength=0;
   let tubeType=iTubeType>=0 ? String(firstDataRow[iTubeType]||'unknown').trim().toLowerCase() : 'unknown';
   if(!['open','one_end_closed','unknown'].includes(tubeType)) tubeType='unknown';
+  let temperature=null;
+  if(iTemperature>=0 && String(firstDataRow[iTemperature]??'').trim()!=='') {
+    const t=Number(firstDataRow[iTemperature]);
+    if(Number.isFinite(t) && t>=-80 && t<=100) temperature=t;
+  }
   let dx=iDx>=0 ? Number(firstDataRow[iDx]) : 0;
   if(!Number.isFinite(dx) || dx<=0) {
     const slopes=[];
@@ -1109,7 +1128,7 @@ function csvDatasetFromRows(csvRows) {
   const maxRev=Math.max(...data.map(d=>d.rev));
   if(!Number.isInteger(maxCycles) || maxCycles<maxRev) maxCycles=maxRev;
   maxCycles=Math.min(1000,Math.max(1,maxCycles));
-  return {data,frequency_hz:Math.max(0,frequency),tube_length_cm:tubeLength,tube_type:tubeType,distance_per_cycle_cm:Math.max(0,dx||0),first_measure_at_start:firstAtStart,max_cycles:maxCycles};
+  return {data,frequency_hz:Math.max(0,frequency),tube_length_cm:tubeLength,tube_type:tubeType,temperature_c:temperature,distance_per_cycle_cm:Math.max(0,dx||0),first_measure_at_start:firstAtStart,max_cycles:maxCycles};
 }
 
 async function importParsedMeasurementDataset(parsed, sourceLabel='CSV') {
@@ -1117,6 +1136,7 @@ async function importParsedMeasurementDataset(parsed, sourceLabel='CSV') {
     frequency_hz:String(parsed.frequency_hz),
     tube_length_cm:String(parsed.tube_length_cm),
     tube_type:parsed.tube_type,
+    temperature_c:parsed.temperature_c==null?'':String(parsed.temperature_c),
     distance_per_cycle_cm:String(parsed.distance_per_cycle_cm),
     max_cycles:String(parsed.max_cycles),
     first_measure_at_start:parsed.first_measure_at_start?'1':'0',

@@ -1,4 +1,4 @@
-# Open Standing Wave Lab v3.17 - full experiment bundle export/import + CloudLLM chatbot
+# Open Standing Wave Lab v3.21 - temperature metadata + grounded experiment chatbot
 import csv
 import json
 import os
@@ -37,6 +37,7 @@ DEFAULT_CONFIG = {
     "first_measure_at_start": True,
     "tube_length_cm": 0.0,
     "tube_type": "open",
+    "temperature_c": None,
     "data_mode": "live",
 }
 
@@ -64,19 +65,41 @@ fit_cache = None
 
 CHAT_SYSTEM_PROMPT = """
 너는 Open Standing Wave Lab의 실험 보조 챗봇이다.
-이 장치는 Arduino UNO Q, 스텝모터-실-도르래, 마이크 센서를 이용해 관 내부의 음향 정상파를 위치에 따라 자동 측정한다.
+이 장치는 Arduino UNO Q, 스텝모터-실-도르래, 마이크 센서를 이용해 관 내부의 음향 정상파 압력 진폭 분포를 위치에 따라 자동 측정한다.
 
-반드시 다음 원칙을 지켜라.
-- 답변은 기본적으로 한국어로 한다. 사용자가 다른 언어로 질문하면 그 언어를 따를 수 있다.
-- 매 요청에 포함되는 '현재 실험 스냅샷'은 그 질문 시점의 최신 자료이며, 최근 대화보다 우선한다.
-- 파장, 마디 간격, 음속 등 이미 Python이 결정론적으로 계산한 값이 있으면 다시 추측해서 다른 값을 만들지 않는다.
-- fitting 결과가 없거나 데이터가 부족하면 없다고 분명히 말한다.
-- 정상파의 기본 관계는 인접 마디 간격 Δx = λ/2, 따라서 λ = 2Δx 이다. 주파수 f가 주어지면 v = fλ를 사용할 수 있다.
+[사실의 우선순위]
+- 매 요청의 '현재 실험 스냅샷'을 그 질문 시점의 최신 실험 사실로 취급하고 최근 대화보다 우선한다.
+- 파장, 마디 간격, R², 음속 등 Python이 결정론적으로 계산한 값이 있으면 '계산된 결과'로서 정확히 인용한다. 다만 계산값의 물리적 신뢰성은 측정 구간과 모드에 따라 별도로 평가하며, 특히 기본진동의 단일 lobe처럼 파장 식별이 약한 경우 계산값을 곧바로 참값으로 단정하지 않는다. 계산값과 사용자의 추측이 충돌하면 사용자의 전제를 그대로 따르지 말고 근거를 들어 설명한다.
+- fitting 결과가 없거나 현재 데이터만으로 판단하기 어려운 것은 추측하지 말고 불확실하다고 명시한다.
+- 특정 회차, 위치, Vpp, 표준편차, clipping 여부를 언급할 때는 반드시 현재 스냅샷의 실제 행을 확인한다. 존재하지 않는 회차나 값을 만들어내지 않는다.
+
+[측정 데이터와 clipping / 외란]
+- clipping 여부의 유일한 기준은 현재 측정 데이터의 `clipped` 필드이다. Vpp가 크거나 약 3 V 부근이라는 이유만으로 clipping이라고 새로 판정하지 않는다.
+- `clipped=1`인 점만 clipping 의심점이라고 부른다. 이 점들은 현재 Python fitting에서 제외된다.
+- `clipped=0`인데 표준편차가 크거나 주변 추세에서 갑자기 벗어난 점은 주변 소음, 말소리, 기계적 외란 등으로 인한 이상점일 가능성을 언급할 수 있으나 원인을 단정하지 않는다.
+- 현재 fitting은 clipping flag가 있는 점만 제외하고 나머지 점을 동일 가중의 제곱오차(SSE)로 맞춘다. 표준편차 가중, robust loss, 자동 이상점 제거를 사용한다고 말하지 않는다. 일부 이상점이 있어도 전체 주기 구조가 충분하면 전역 fitting 결과가 안정적일 수 있다고 설명한다.
+- R²는 현재 모델이 관측된 진폭 형상을 얼마나 잘 설명하는지를 나타내는 지표이지, 파장 자체의 정확성이나 물리적 모수의 식별 가능성을 보증하는 값은 아니다.
+
+[정상파 해석]
+- 기본 관계는 인접한 같은 종류의 압력 마디 사이 거리 Δx = λ/2, 따라서 λ = 2Δx 이며, 주파수 f가 주어지면 v = fλ를 사용할 수 있다.
+- 이 장치의 Vpp는 마이크 출력의 압력 진폭에 대응한다. 개관의 열린 끝은 이상적으로 압력 마디에 가깝고, 막힌 끝은 압력 배에 가깝다.
+- 모드(기본진동, 2배진동, 3배진동 등)는 관 종류, 관 길이, 주파수, 실험실 온도, 실제 측정된 공간 패턴, fitting 결과를 함께 고려해 판단한다. 단순히 L/(λ/2)를 가장 가까운 정수로 반올림하는 것만으로 확정하지 않는다.
+- 개관의 기본진동처럼 관 내부 측정 구간에 하나의 압력 진폭 lobe만 주로 보이고 양 끝의 실제 압력 마디가 끝단보정 때문에 관 바깥쪽에 위치할 수 있는 경우, 자유로운 sinusoidal fitting만으로 λ를 정밀하게 식별하기 어렵다. 이 경우 높은 R²만으로 λ와 음속이 정확하다고 단정하지 말고, 관 길이·주파수·온도·끝단보정 가능성을 함께 검토한다.
+- 한쪽이 막힌 관의 기본진동도 관 내부에서 대략 1/4파장만 관측되므로, 경계조건과 끝단보정을 무시한 자유 fitting의 λ 추정에는 같은 종류의 식별 한계가 있을 수 있다.
+- 반대로 관 내부에 둘 이상의 명확한 압력 마디 또는 반복 lobe가 나타나는 고차 모드에서는 공간 주기에서 λ를 직접 제약할 수 있으므로 파장 추정이 일반적으로 더 강건하다.
+- 끝단보정의 크기를 정량적으로 계산하려면 관의 반지름/직경 등 추가 정보가 필요하다. 그 정보가 스냅샷에 없으면 보정량을 임의로 만들지 않는다.
+- 대칭적인 개관에서 양 끝의 끝단보정이 비슷하다면 끝단보정 자체만으로 중앙 압력 배가 한쪽으로 이동한다고 단정하지 않는다. 중앙 위치의 이동은 시작점/위치 보정, 비대칭 경계조건, 외란 등 다른 가능성과 함께 논의한다.
+
+[온도와 음속]
+- 실험실 온도가 입력되어 있으면 20℃ 같은 임의의 상온값 대신 입력된 온도를 기준으로 이론 음속과 비교한다.
+- 필요하면 건조 공기의 근사식 v ≈ 331.3 + 0.606T (m/s, T는 ℃)를 사용할 수 있으나, 습도·기압 등을 보정하지 않은 근사임을 필요할 때 밝힌다.
+- 온도가 미입력이라면 임의의 온도를 가정하여 정확한 오차율을 제시하지 않는다.
+
+[장치와 응답 규칙]
 - 추정 위치는 실-도르래 보정값으로 얻은 값이므로 절대 위치라고 단정하지 않는다.
-- clipping 표시점은 신뢰도가 낮을 수 있으며 fitting에서는 제외된다.
-- 이 장치의 학습 효과나 학생 성취 향상을 실험 데이터 없이 단정하지 않는다.
 - 측정 데이터 초기화는 물리적 원점 복귀가 아니다. 새 실험 전에는 마이크를 START 표시선에 수동으로 맞추고 시작 위치를 확인한다.
-- 최근 대화에는 과거 질문/답변만 들어 있고, 과거 실험 데이터 스냅샷은 저장되지 않는다. 현재 스냅샷만 실험 사실의 기준으로 사용한다.
+- 이 장치의 학습 효과나 학생 성취 향상을 실험 데이터 없이 단정하지 않는다.
+- 최근 대화에는 과거 질문/답변만 들어 있고 과거 실험 데이터 스냅샷은 저장되지 않는다. 현재 스냅샷만 실험 사실의 기준으로 사용한다.
 - 답변은 실험실에서 바로 읽기 좋게 간결하되, 물리 설명이 필요한 질문에는 식과 근거를 포함한다.
 """.strip()
 
@@ -178,6 +201,19 @@ def save_session():
         atomic_write_json(SESSION_JSON, session)
 
 
+def normalize_temperature_c(value):
+    """Return a validated optional laboratory temperature in degrees Celsius."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text == "" or text.lower() in ("none", "null", "nan"):
+        return None
+    temperature = float(text)
+    if not math.isfinite(temperature) or temperature < -80.0 or temperature > 100.0:
+        raise ValueError("실험실 온도는 -80~100 ℃ 범위로 입력하십시오.")
+    return temperature
+
+
 def archive_current_measurements(reason):
     global measurements
     with data_lock:
@@ -277,6 +313,7 @@ def save_measurements():
                     "max_cycles",
                     "tube_length_cm",
                     "tube_type",
+                    "temperature_c",
                 ]
             )
             dx = float(config.get("distance_per_cycle_cm", 0.0) or 0.0)
@@ -285,6 +322,7 @@ def save_measurements():
             max_cycles = configured_max_cycles()
             tube_length_cm = float(config.get("tube_length_cm", 0.0) or 0.0)
             tube_type = str(config.get("tube_type", "unknown") or "unknown")
+            temperature_c = normalize_temperature_c(config.get("temperature_c"))
             imported = is_imported_mode()
             for item in measurements:
                 if imported and item.get("x_cm") is not None:
@@ -307,6 +345,7 @@ def save_measurements():
                         max_cycles,
                         tube_length_cm,
                         tube_type,
+                        "" if temperature_c is None else temperature_c,
                     ]
                 )
         temp_path.replace(DATA_CSV)
@@ -752,11 +791,12 @@ def api_data():
         return {"ok": False, "error": str(exc)}
 
 
-def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 110, first_measure_at_start: int = 1, tube_length_cm: float = 0.0, tube_type: str = "open"):
+def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 110, first_measure_at_start: int = 1, tube_length_cm: float = 0.0, tube_type: str = "open", temperature_c=""):
     try:
         frequency_hz = max(0.0, float(frequency_hz))
         distance_per_cycle_cm = max(0.0, float(distance_per_cycle_cm))
         tube_length_cm = max(0.0, float(tube_length_cm))
+        temperature_c = normalize_temperature_c(temperature_c)
         tube_type = str(tube_type or "unknown").strip().lower()
         if tube_type not in ("open", "one_end_closed", "unknown"):
             raise ValueError("관 종류는 open, one_end_closed, unknown 중 하나여야 합니다.")
@@ -775,6 +815,7 @@ def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, ma
                 config["first_measure_at_start"] = bool(first_measure_at_start)
                 config["tube_length_cm"] = tube_length_cm
                 config["tube_type"] = tube_type
+                config["temperature_c"] = temperature_c
             save_config()
             save_measurements()
             return {"ok": True, "config": dict(config), "measurements": measurement_payload(), "state": read_mcu_status()}
@@ -805,6 +846,7 @@ def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, ma
                 config["first_measure_at_start"] = bool(first_measure_at_start)
                 config["tube_length_cm"] = tube_length_cm
                 config["tube_type"] = tube_type
+                config["temperature_c"] = temperature_c
                 config["data_mode"] = "live"
         save_config()
         save_measurements()
@@ -836,7 +878,7 @@ def _clean_import_row(row):
     }
 
 
-def api_import_begin(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 110, first_measure_at_start: int = 1, tube_length_cm: float = 0.0, tube_type: str = "unknown", total_rows: int = 0):
+def api_import_begin(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 110, first_measure_at_start: int = 1, tube_length_cm: float = 0.0, tube_type: str = "unknown", temperature_c="", total_rows: int = 0):
     global import_buffer, import_meta
     try:
         state = read_mcu_status()
@@ -859,6 +901,7 @@ def api_import_begin(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0
                 "first_measure_at_start": bool(int(first_measure_at_start)),
                 "tube_length_cm": max(0.0, float(tube_length_cm)),
                 "tube_type": tube_type,
+                "temperature_c": normalize_temperature_c(temperature_c),
                 "total_rows": total_rows,
             }
         return {"ok": True}
@@ -906,6 +949,7 @@ def api_import_commit():
             config["first_measure_at_start"] = bool(meta["first_measure_at_start"])
             config["tube_length_cm"] = float(meta.get("tube_length_cm", 0.0) or 0.0)
             config["tube_type"] = str(meta.get("tube_type", "unknown") or "unknown")
+            config["temperature_c"] = normalize_temperature_c(meta.get("temperature_c"))
             config["data_mode"] = "imported"
         save_config()
         save_measurements()
@@ -989,18 +1033,23 @@ def build_experiment_context():
     first_at_start = configured_first_measure_at_start()
     tube_length_cm = float(config.get("tube_length_cm", 0.0) or 0.0)
     tube_type = str(config.get("tube_type", "unknown") or "unknown")
+    temperature_c = normalize_temperature_c(config.get("temperature_c"))
     tube_type_ko = {"open": "개관(양쪽 열림)", "one_end_closed": "한쪽이 막힌 관", "unknown": "미지정"}.get(tube_type, "미지정")
     clipped_count = sum(1 for row in rows if row.get("clipped"))
+    positions = [float(row["x_cm"]) for row in rows if row.get("x_cm") is not None]
     fit = get_fit_for_chat()
 
     context_lines = [
         "장치: Arduino UNO Q 기반 음향 정상파 자동 스캔 장치",
         f"사용 관 종류 = {tube_type_ko}",
         f"사용 관 길이 = {tube_length_cm:.3f} cm" if tube_length_cm > 0 else "사용 관 길이 = 미입력",
+        f"실험실 온도 = {temperature_c:.2f} ℃" if temperature_c is not None else "실험실 온도 = 미입력",
         "기구: 스텝모터 + 실/도르래로 마이크를 한 방향으로 이동, 새 실험 전 수동 복귀",
         "현재 빠른 스캔 설정: 모터 20 RPM, 이동 후 안정화 0.5 s, 200 ms Vpp window 10회, 최대/최소 1개씩 제외 후 8개 평균/표준편차",
+        "현재 Python fitting 방식: clipped=1 점만 제외하고 나머지 비클리핑 점 전체를 동일 가중 SSE로 fitting; 표준편차 가중/robust loss/자동 이상점 제거는 사용하지 않음",
         f"설정 주파수 f = {frequency:.3f} Hz" if frequency > 0 else "설정 주파수 f = 미입력",
         f"1회 이동당 추정 거리 = {dx:.4f} cm" if dx > 0 else "1회 이동당 추정 거리 = 미보정(그래프 x축은 회차)",
+        f"현재 측정 위치 범위 = {min(positions):.3f} ~ {max(positions):.3f} cm" if positions else "현재 측정 위치 범위 = 아직 없음",
         f"설정 마지막 회차 = {max_cycles}회",
         f"첫 데이터 위치 = {'확인된 시작 위치(1회차 = 0 cm)' if first_at_start else '1회 이동 후'}",
         f"데이터 출처 = {'불러온 실험 데이터' if is_imported_mode() else '현재 MCU 실시간 측정 데이터'}",
