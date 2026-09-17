@@ -1,4 +1,4 @@
-# Open Standing Wave Lab v3.21 - temperature metadata + grounded experiment chatbot
+# Open Standing Wave Lab v4.2 - temperature metadata + grounded experiment chatbot
 import csv
 import json
 import os
@@ -7,10 +7,12 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 from arduino.app_utils import *
 from arduino.app_bricks.web_ui import WebUI
 from arduino.app_bricks.cloud_llm import CloudLLM
+from activity_log_api import activity_log, register_activity_log_routes
 
 
 PHASE_NAMES = {
@@ -43,7 +45,7 @@ DEFAULT_CONFIG = {
 
 bridge_lock = threading.RLock()
 data_lock = threading.RLock()
-sync_lock = threading.Lock()  # Serialize MCU->Linux result synchronization.
+sync_lock = threading.RLock()  # Also allows reset/stop to force a final synchronization safely.
 max_cycles_lock = threading.RLock()  # Prevent config/background races while applying scan settings.
 import_lock = threading.RLock()
 measurements = []
@@ -63,44 +65,125 @@ chat_sessions = {}
 fit_cache_lock = threading.RLock()
 fit_cache = None
 
-CHAT_SYSTEM_PROMPT = """
-너는 Open Standing Wave Lab의 실험 보조 챗봇이다.
-이 장치는 Arduino UNO Q, 스텝모터-실-도르래, 마이크 센서를 이용해 관 내부의 음향 정상파 압력 진폭 분포를 위치에 따라 자동 측정한다.
 
-[사실의 우선순위]
+def local_now(timespec="seconds"):
+    """Return the computer's current local time with its UTC offset."""
+    return datetime.now().astimezone().isoformat(timespec=timespec)
+
+
+def clean_research_ids(research_session_id="", experiment_id=""):
+    """Return bounded browser/experiment UUID strings, or (None, None) for an old UI."""
+    research_session_id = str(research_session_id or "").strip()[:160]
+    experiment_id = str(experiment_id or "").strip()[:160]
+    if not research_session_id or not experiment_id:
+        return None, None
+    return research_session_id, experiment_id
+
+
+def research_warning(operation, exc):
+    # Research persistence must never stop the physical apparatus or hide its result.
+    print(f"RESEARCH DB WARNING [{operation}]: {exc}")
+
+
+def prepare_research_experiment(research_session_id, experiment_id, status="prepared"):
+    ids = clean_research_ids(research_session_id, experiment_id)
+    if ids[0]:
+        try:
+            activity_log.prepare_experiment(ids[0], ids[1], dict(config), status=status)
+        except Exception as exc:
+            research_warning("prepare_experiment", exc)
+
+
+def finish_research_experiment(research_session_id, experiment_id, status, reason, state, require_active=False):
+    # The experiment the MCU is actually running is the active one, no matter which
+    # browser tab (possibly holding a stale experiment_id) pressed the button.
+    ids = activity_log.active_ids()
+    if not (ids[0] and ids[1]):
+        if require_active:
+            return
+        ids = clean_research_ids(research_session_id, experiment_id)
+    if ids[0] and ids[1]:
+        try:
+            activity_log.finish_experiment(ids[0], ids[1], status, reason, state)
+        except Exception as exc:
+            research_warning("finish_experiment", exc)
+
+
+def start_research_experiment(research_session_id, experiment_id, state):
+    """Return the experiment_id actually recorded (a new one if the old id was closed)."""
+    ids = clean_research_ids(research_session_id, experiment_id)
+    if not ids[0]:
+        return None
+    try:
+        return activity_log.start_experiment(ids[0], ids[1], dict(config), state)
+    except Exception as exc:
+        research_warning("start_experiment", exc)
+        return None
+
+
+CHAT_SYSTEM_PROMPT = """
+<시스템_지침>
+<역할>정상파를 모르는 학생의 실험을 보조하는 챗봇</역할>
+<장치의_개요>이 장치는 Arduino UNO Q, 스텝모터-실-도르래, 마이크 센서를 이용해 관 내부의 음향 정상파 압력 진폭 분포를 위치에 따라 자동 측정하여 실시간으로 그래프를 그려 주며, 학생의 질의에는 실험과 실시간 측정값을 근거로 답한다.</장치의_개요>
+<사실의_우선순위>
 - 매 요청의 '현재 실험 스냅샷'을 그 질문 시점의 최신 실험 사실로 취급하고 최근 대화보다 우선한다.
+- 최근 대화에는 과거 질문과 답변만 있으며 과거의 실험 스냅샷은 포함되지 않는다. 수치적 사실은 항상 현재 실험 스냅샷을 기준으로 한다.
+- 이 장치가 학습 효과나 학생의 성취도를 높였다고 실험 데이터 없이 단정하지 않는다.
 - 파장, 마디 간격, R², 음속 등 Python이 결정론적으로 계산한 값이 있으면 '계산된 결과'로서 정확히 인용한다. 다만 계산값의 물리적 신뢰성은 측정 구간과 모드에 따라 별도로 평가하며, 특히 기본진동의 단일 lobe처럼 파장 식별이 약한 경우 계산값을 곧바로 참값으로 단정하지 않는다. 계산값과 사용자의 추측이 충돌하면 사용자의 전제를 그대로 따르지 말고 근거를 들어 설명한다.
 - fitting 결과가 없거나 현재 데이터만으로 판단하기 어려운 것은 추측하지 말고 불확실하다고 명시한다.
 - 특정 회차, 위치, Vpp, 표준편차, clipping 여부를 언급할 때는 반드시 현재 스냅샷의 실제 행을 확인한다. 존재하지 않는 회차나 값을 만들어내지 않는다.
-
-[측정 데이터와 clipping / 외란]
+</사실의_우선순위>
+<측정_데이터와_clipping_또는_외란>
 - clipping 여부의 유일한 기준은 현재 측정 데이터의 `clipped` 필드이다. Vpp가 크거나 약 3 V 부근이라는 이유만으로 clipping이라고 새로 판정하지 않는다.
 - `clipped=1`인 점만 clipping 의심점이라고 부른다. 이 점들은 현재 Python fitting에서 제외된다.
 - `clipped=0`인데 표준편차가 크거나 주변 추세에서 갑자기 벗어난 점은 주변 소음, 말소리, 기계적 외란 등으로 인한 이상점일 가능성을 언급할 수 있으나 원인을 단정하지 않는다.
 - 현재 fitting은 clipping flag가 있는 점만 제외하고 나머지 점을 동일 가중의 제곱오차(SSE)로 맞춘다. 표준편차 가중, robust loss, 자동 이상점 제거를 사용한다고 말하지 않는다. 일부 이상점이 있어도 전체 주기 구조가 충분하면 전역 fitting 결과가 안정적일 수 있다고 설명한다.
 - R²는 현재 모델이 관측된 진폭 형상을 얼마나 잘 설명하는지를 나타내는 지표이지, 파장 자체의 정확성이나 물리적 모수의 식별 가능성을 보증하는 값은 아니다.
-
-[정상파 해석]
-- 기본 관계는 인접한 같은 종류의 압력 마디 사이 거리 Δx = λ/2, 따라서 λ = 2Δx 이며, 주파수 f가 주어지면 v = fλ를 사용할 수 있다.
+- R²를 '정확도'라고 부르지 않는다. 학생에게는 '계산한 곡선이 측정값의 모양을 얼마나 잘 따라가는지 나타내는 값'이라고 설명한다.
+</측정_데이터와_clipping_또는_외란>
+<정상파_해석>
+- 서로 이웃한 같은 종류의 지점 사이 거리, 즉 마디와 다음 마디 사이 또는 배와 다음 배 사이의 거리는 Δx = λ/2이다. 따라서 λ = 2Δx를 사용할 수 있다.
+- 이론값과 측정값이 두 배 정도 차이가 난다면 학생이 마디와 배를 하나씩 선택한 거리인 λ/4를 잰 것일 수 있으므로, 이를 λ/2로 잘못 계산하지 않았는지 되묻는다.
+- 진동수 f가 주어지면 v = fλ를 사용할 수 있다.
 - 이 장치의 Vpp는 마이크 출력의 압력 진폭에 대응한다. 개관의 열린 끝은 이상적으로 압력 마디에 가깝고, 막힌 끝은 압력 배에 가깝다.
-- 모드(기본진동, 2배진동, 3배진동 등)는 관 종류, 관 길이, 주파수, 실험실 온도, 실제 측정된 공간 패턴, fitting 결과를 함께 고려해 판단한다. 단순히 L/(λ/2)를 가장 가까운 정수로 반올림하는 것만으로 확정하지 않는다.
-- 개관의 기본진동처럼 관 내부 측정 구간에 하나의 압력 진폭 lobe만 주로 보이고 양 끝의 실제 압력 마디가 끝단보정 때문에 관 바깥쪽에 위치할 수 있는 경우, 자유로운 sinusoidal fitting만으로 λ를 정밀하게 식별하기 어렵다. 이 경우 높은 R²만으로 λ와 음속이 정확하다고 단정하지 말고, 관 길이·주파수·온도·끝단보정 가능성을 함께 검토한다.
+- 모드(기본진동, 2배진동, 3배진동 등)는 관 종류, 관 길이, 진동수, 실험실 온도, 실제 측정된 공간 패턴, fitting 결과를 함께 고려해 판단한다. 단순히 L/(λ/2)를 가장 가까운 정수로 반올림하는 것만으로 확정하지 않는다.
+- 개관의 기본진동처럼 관 내부 측정 구간에 하나의 압력 진폭 lobe만 주로 보이고 양 끝의 실제 압력 마디가 끝단보정 때문에 관 바깥쪽에 위치할 수 있는 경우, 자유로운 sinusoidal fitting만으로 λ를 정밀하게 식별하기 어렵다. 이 경우 높은 R²만으로 λ와 음속이 정확하다고 단정하지 말고, 관 길이·진동수·온도·끝단보정 가능성을 함께 검토한다.
 - 한쪽이 막힌 관의 기본진동도 관 내부에서 대략 1/4파장만 관측되므로, 경계조건과 끝단보정을 무시한 자유 fitting의 λ 추정에는 같은 종류의 식별 한계가 있을 수 있다.
 - 반대로 관 내부에 둘 이상의 명확한 압력 마디 또는 반복 lobe가 나타나는 고차 모드에서는 공간 주기에서 λ를 직접 제약할 수 있으므로 파장 추정이 일반적으로 더 강건하다.
 - 끝단보정의 크기를 정량적으로 계산하려면 관의 반지름/직경 등 추가 정보가 필요하다. 그 정보가 스냅샷에 없으면 보정량을 임의로 만들지 않는다.
 - 대칭적인 개관에서 양 끝의 끝단보정이 비슷하다면 끝단보정 자체만으로 중앙 압력 배가 한쪽으로 이동한다고 단정하지 않는다. 중앙 위치의 이동은 시작점/위치 보정, 비대칭 경계조건, 외란 등 다른 가능성과 함께 논의한다.
-
-[온도와 음속]
+- 공명 진동수가 아닌 진동수라고 해서 정상파가 생기지 않는다고 단정하지 않는다.
+- 관의 다른 공명 진동수에서는 마디와 배의 개수가 다른 정상파 모드가 나타날 수 있다.
+- 공명 진동수에서 많이 벗어나면 정상파가 약하거나 그래프의 반복 모양이 불분명할 수 있다고 설명한다.
+- fitting을 사용하면 파장을 반드시 더 정확하게 구할 수 있다고 말하지 않는다. 측정점 전체를 이용해 파장을 추정하는 방법이라고 설명한다.
+- Vpp의 pp는 peak-to-peak이며, 한 측정 구간에서 신호의 최댓값과 최솟값의 차이라고 설명한다.
+- Vpp가 크면 이 장치에서 측정한 마이크 신호의 변화 폭이 크다는 뜻이다. 이를 실제 음압이나 사람이 느끼는 소리의 크기와 완전히 같다고 단정하지 않는다.
+</정상파_해석>
+<온도와_음속>
 - 실험실 온도가 입력되어 있으면 20℃ 같은 임의의 상온값 대신 입력된 온도를 기준으로 이론 음속과 비교한다.
 - 필요하면 건조 공기의 근사식 v ≈ 331.3 + 0.606T (m/s, T는 ℃)를 사용할 수 있으나, 습도·기압 등을 보정하지 않은 근사임을 필요할 때 밝힌다.
 - 온도가 미입력이라면 임의의 온도를 가정하여 정확한 오차율을 제시하지 않는다.
-
-[장치와 응답 규칙]
+</온도와_음속>
+<실험_장치의_특성>
 - 추정 위치는 실-도르래 보정값으로 얻은 값이므로 절대 위치라고 단정하지 않는다.
 - 측정 데이터 초기화는 물리적 원점 복귀가 아니다. 새 실험 전에는 마이크를 START 표시선에 수동으로 맞추고 시작 위치를 확인한다.
-- 이 장치의 학습 효과나 학생 성취 향상을 실험 데이터 없이 단정하지 않는다.
-- 최근 대화에는 과거 질문/답변만 들어 있고 과거 실험 데이터 스냅샷은 저장되지 않는다. 현재 스냅샷만 실험 사실의 기준으로 사용한다.
-- 답변은 실험실에서 바로 읽기 좋게 간결하되, 물리 설명이 필요한 질문에는 식과 근거를 포함한다.
+</실험_장치의_특성>
+<학습자_수준>
+- 대상은 정상파를 처음 접하는 고등학교 1학년 학생이다.
+- 학생은 파장 기호 λ, 마디, 배, 위상, fitting, R²의 의미를 아직 배우지 않았다.
+- 학생의 지적 능력을 낮게 평가하거나 어린아이를 대하듯 말하지 않는다.
+- 전문용어를 처음 사용할 때는 일상적인 표현을 먼저 제시하고, 그 뒤에 용어를 괄호로 알려 준다.
+  예: "그래프에서 소리가 가장 약한 지점(마디)"
+</학습자_수준>
+<학생에게_보이는_응답_방식>
+- 먼저 질문에 대한 답을 쉬운 말로 한두 문장 안에 제시한다.
+- 현재 그래프나 측정값에서 직접 확인할 수 있는 근거를 한두 개만 보여 준다.
+- 전문용어와 수식은 질문에 답하는 데 꼭 필요할 때만 사용한다.
+- 수식을 사용할 때는 기호의 뜻을 먼저 설명하거나 바로 뒤에 설명한다.
+- 한 답변에서 새로운 개념을 너무 많이 소개하지 않는다.
+- 가능하면 마지막에 학생이 그래프에서 확인할 한 가지를 알려 준다.
+</학생에게_보이는_응답_방식>
+</시스템_지침>
 """.strip()
 
 
@@ -222,7 +305,7 @@ def archive_current_measurements(reason):
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         path = ARCHIVE_DIR / f"measurements_{stamp}.json"
         payload = {
-            "archived_at": datetime.now().isoformat(timespec="seconds"),
+            "archived_at": local_now(),
             "reason": str(reason),
             "config": dict(config),
             "measurements": [dict(row) for row in measurements],
@@ -270,6 +353,12 @@ def reconcile_mcu_session(state):
 
     if should_archive:
         archive_current_measurements(reason)
+        active_session_id, active_experiment_id = activity_log.active_ids()
+        if active_session_id and active_experiment_id:
+            try:
+                activity_log.finish_experiment(active_session_id, active_experiment_id, "abandoned", reason, state)
+            except Exception as exc:
+                research_warning("abandon_experiment", exc)
 
     if previous_boot != boot_id:
         session["boot_id"] = boot_id
@@ -451,7 +540,7 @@ def get_result_from_mcu(rev):
     std_mv = int(bridge_call("get_result_std_mv", int(rev)))
     clipped = bool(int(bridge_call("get_result_clipped", int(rev))))
     return {
-        "time": datetime.now().isoformat(timespec="seconds"),
+        "time": local_now(),
         "rev": int(rev),
         "avg_v": avg_mv / 1000.0,
         "std_v": std_mv / 1000.0,
@@ -468,6 +557,18 @@ def sync_new_results(state=None):
             return False
         if state is None:
             state = read_mcu_status()
+
+        # Backfill Linux-persisted points before session reconciliation can archive or
+        # clear them after an MCU reboot. This closes the narrow crash window between
+        # measurements.json being written and the research transaction completing.
+        try:
+            with data_lock:
+                persisted_rows = [dict(row) for row in measurements]
+                persisted_config = dict(config)
+            if persisted_rows:
+                activity_log.record_measurements_for_active(persisted_rows, persisted_config, state)
+        except Exception as exc:
+            research_warning("backfill_measurements", exc)
 
         reconcile_mcu_session(state)
         target_rev = int(state.get("last_result_rev", 0))
@@ -494,6 +595,17 @@ def sync_new_results(state=None):
 
         if changed:
             save_measurements()
+
+        # Upsert every completed point into the research DB on every pass. Repeating
+        # this is intentional: if a transient DB error occurred, the next 0.5 s pass
+        # repairs the missing rows, while UNIQUE(experiment_id, cycle) prevents copies.
+        try:
+            with data_lock:
+                research_rows = [dict(row) for row in measurements]
+                research_config = dict(config)
+            activity_log.record_measurements_for_active(research_rows, research_config, state)
+        except Exception as exc:
+            research_warning("record_measurements", exc)
         return changed
 
 
@@ -671,7 +783,7 @@ def api_jog(direction: int = 0, detail: int = 1):
         return {"ok": False, "error": str(exc)}
 
 
-def api_start():
+def api_start(research_session_id="", experiment_id=""):
     try:
         if is_imported_mode():
             state = read_mcu_status()
@@ -683,36 +795,70 @@ def api_start():
             return {"ok": False, "error": "설정한 마지막 회차를 MCU에 적용하지 못했습니다. 장치 상태를 확인하십시오.", "state": state}
         if bool(state.get("first_measure_at_start")) != configured_first_measure_at_start():
             return {"ok": False, "error": "설정한 첫 데이터 위치 방식을 MCU에 적용하지 못했습니다. 데이터가 비어 있는지 확인하십시오.", "state": state}
+
+        used_experiment_id = start_research_experiment(research_session_id, experiment_id, state)
+        if used_experiment_id:
+            experiment_id = used_experiment_id
         bridge_call("set_run", 1)
         state = read_mcu_status()
         if state["running"]:
-            return {"ok": True, "state": state}
+            return {"ok": True, "state": state, "research_experiment_id": used_experiment_id}
         if not state["position_ready"]:
+            finish_research_experiment(research_session_id, experiment_id, "start_failed", "position_not_ready", state)
             return {
                 "ok": False,
                 "error": "시작 위치가 확인되지 않았거나 회차-위치 대응이 무효입니다. 데이터 초기화 후 마이크를 시작 표시선으로 수동 복귀시키고 '시작 위치 확인'을 누르십시오.",
                 "state": state,
+                "research_experiment_id": used_experiment_id,
             }
         if state["last_result_rev"] >= state["max_cycles"]:
+            finish_research_experiment(research_session_id, experiment_id, "start_failed", "maximum_cycle_already_reached", state)
             return {
                 "ok": False,
                 "error": "최대 측정 횟수에 도달했습니다. 결과를 저장한 뒤 새 실험을 준비하십시오.",
                 "state": state,
+                "research_experiment_id": used_experiment_id,
             }
-        return {"ok": False, "error": "MCU가 측정 상태로 전환되지 않았습니다.", "state": state}
+        finish_research_experiment(research_session_id, experiment_id, "start_failed", "mcu_did_not_start", state)
+        return {"ok": False, "error": "MCU가 측정 상태로 전환되지 않았습니다.", "state": state, "research_experiment_id": used_experiment_id}
     except Exception as exc:
+        ids = clean_research_ids(research_session_id, experiment_id)
+        if ids[0] and activity_log.active_ids() == ids:
+            finish_research_experiment(
+                research_session_id, experiment_id, "start_failed",
+                f"start_exception: {exc}", locals().get("state", {}),
+            )
         return {"ok": False, "error": str(exc)}
 
 
-def api_stop():
+def api_stop(research_session_id="", experiment_id=""):
     try:
+        state_before_stop = read_mcu_status()
         bridge_call("set_jog_direction", 0)
         bridge_call("set_run", 0)
         time.sleep(0.05)
         state = read_mcu_status()
         sync_new_results(state)
+        completed = int(state.get("last_result_rev", 0) or 0) >= int(state.get("max_cycles", 0) or 0) > 0
+        end_state = dict(state)
+        end_state["state_before_stop"] = state_before_stop
+        finish_research_experiment(
+            research_session_id,
+            experiment_id,
+            "completed" if completed else "stopped",
+            "maximum_cycle_reached" if completed else "user_stop",
+            end_state,
+            require_active=True,
+        )
         return {"ok": True, "state": state}
     except Exception as exc:
+        if activity_log.active_ids()[1]:
+            failure_state = dict(locals().get("state", {}) or {})
+            failure_state["state_before_stop"] = locals().get("state_before_stop", {})
+            finish_research_experiment(
+                research_session_id, experiment_id, "stopped",
+                f"stop_exception: {exc}", failure_state,
+            )
         return {"ok": False, "error": str(exc)}
 
 
@@ -739,13 +885,31 @@ def api_confirm_start():
         return {"ok": False, "error": str(exc)}
 
 
-def api_reset():
+def api_reset(research_session_id="", experiment_id=""):
     global measurements
     try:
         # Do not let the background synchronizer re-add an old MCU result while reset is
         # clearing both the MCU buffer and the Linux-side current dataset.
         with sync_lock:
+            state_before_stop = read_mcu_status()
             bridge_call("set_jog_direction", 0)
+            bridge_call("set_run", 0)
+            time.sleep(0.05)
+            before_reset = read_mcu_status()
+            # Pull the last completed MCU result before reset_all erases its buffer.
+            # An interrupted, unfinished cycle has no final Vpp, but its phase/step/
+            # measure_index remain preserved in experiments.end_state_json.
+            sync_new_results(before_reset)
+            completed = int(before_reset.get("last_result_rev", 0) or 0) >= int(before_reset.get("max_cycles", 0) or 0) > 0
+            end_state = dict(before_reset)
+            end_state["state_before_stop"] = state_before_stop
+            finish_research_experiment(
+                research_session_id,
+                experiment_id,
+                "completed" if completed else "reset",
+                "reset_after_completion" if completed else "user_reset",
+                end_state,
+            )
             bridge_call("reset_all")
             state = None
             for _ in range(30):
@@ -765,6 +929,13 @@ def api_reset():
             save_measurements()
         return {"ok": True, "state": state, "config": dict(config)}
     except Exception as exc:
+        if activity_log.active_ids()[1]:
+            failure_state = dict(locals().get("before_reset", {}) or {})
+            failure_state["state_before_stop"] = locals().get("state_before_stop", {})
+            finish_research_experiment(
+                research_session_id, experiment_id, "stopped",
+                f"reset_exception: {exc}", failure_state,
+            )
         return {"ok": False, "error": str(exc)}
 
 
@@ -791,7 +962,7 @@ def api_data():
         return {"ok": False, "error": str(exc)}
 
 
-def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 110, first_measure_at_start: int = 1, tube_length_cm: float = 0.0, tube_type: str = "open", temperature_c=""):
+def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 110, first_measure_at_start: int = 1, tube_length_cm: float = 0.0, tube_type: str = "open", temperature_c="", research_session_id="", experiment_id=""):
     try:
         frequency_hz = max(0.0, float(frequency_hz))
         distance_per_cycle_cm = max(0.0, float(distance_per_cycle_cm))
@@ -818,6 +989,7 @@ def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, ma
                 config["temperature_c"] = temperature_c
             save_config()
             save_measurements()
+            prepare_research_experiment(research_session_id, experiment_id, status="imported")
             return {"ok": True, "config": dict(config), "measurements": measurement_payload(), "state": read_mcu_status()}
 
         with max_cycles_lock:
@@ -850,6 +1022,7 @@ def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, ma
                 config["data_mode"] = "live"
         save_config()
         save_measurements()
+        prepare_research_experiment(research_session_id, experiment_id, status="prepared")
         state = read_mcu_status()
         return {"ok": True, "config": dict(config), "measurements": measurement_payload(), "state": state}
     except Exception as exc:
@@ -878,7 +1051,7 @@ def _clean_import_row(row):
     }
 
 
-def api_import_begin(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 110, first_measure_at_start: int = 1, tube_length_cm: float = 0.0, tube_type: str = "unknown", temperature_c="", total_rows: int = 0):
+def api_import_begin(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 110, first_measure_at_start: int = 1, tube_length_cm: float = 0.0, tube_type: str = "unknown", temperature_c="", total_rows: int = 0, research_session_id="", experiment_id=""):
     global import_buffer, import_meta
     try:
         state = read_mcu_status()
@@ -903,6 +1076,8 @@ def api_import_begin(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0
                 "tube_type": tube_type,
                 "temperature_c": normalize_temperature_c(temperature_c),
                 "total_rows": total_rows,
+                "research_session_id": str(research_session_id or "")[:160],
+                "experiment_id": str(experiment_id or "")[:160],
             }
         return {"ok": True}
     except Exception as exc:
@@ -953,8 +1128,20 @@ def api_import_commit():
             config["data_mode"] = "imported"
         save_config()
         save_measurements()
+        research_ids = clean_research_ids(meta.get("research_session_id"), meta.get("experiment_id"))
+        imported_experiment_id = None
+        if research_ids[0]:
+            try:
+                imported_state = read_mcu_status()
+                imported_experiment_id = activity_log.start_experiment(
+                    research_ids[0], research_ids[1], dict(config), imported_state, require_fresh=True)
+                activity_log.record_measurements_for_active(rows, dict(config), imported_state)
+                activity_log.finish_experiment(research_ids[0], imported_experiment_id, "imported", "experiment_bundle_import", imported_state)
+            except Exception as exc:
+                research_warning("record_imported_experiment", exc)
         return {
             "ok": True,
+            "research_experiment_id": imported_experiment_id,
             "config": dict(config),
             "measurements": measurement_payload(),
             "state": read_mcu_status(),
@@ -971,15 +1158,28 @@ def api_import_cancel():
     return {"ok": True}
 
 
-def api_fit():
+def api_fit(research_session_id="", experiment_id=""):
     global fit_cache
     try:
         result = fit_standing_wave()
         with fit_cache_lock:
             fit_cache = dict(result) if isinstance(result, dict) else None
+        ids = clean_research_ids(research_session_id, experiment_id)
+        if ids[0]:
+            try:
+                activity_log.record_analysis(ids[0], ids[1], "curve_fit", result, dict(config))
+            except Exception as exc:
+                research_warning("record_analysis", exc)
         return result
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        result = {"ok": False, "error": str(exc)}
+        ids = clean_research_ids(research_session_id, experiment_id)
+        if ids[0]:
+            try:
+                activity_log.record_analysis(ids[0], ids[1], "curve_fit", result, dict(config))
+            except Exception as log_exc:
+                research_warning("record_analysis_error", log_exc)
+        return result
 
 
 def compact_measurement_context():
@@ -1025,6 +1225,19 @@ def get_fit_for_chat():
     return result
 
 
+def _xml_text(value):
+    """Return XML-safe element text while discarding XML 1.0 control characters."""
+    text = "" if value is None else str(value)
+    text = "".join(
+        char for char in text
+        if char in "\t\n\r"
+        or 0x20 <= ord(char) <= 0xD7FF
+        or 0xE000 <= ord(char) <= 0xFFFD
+        or 0x10000 <= ord(char) <= 0x10FFFF
+    )
+    return xml_escape(text, {'"': "&quot;", "'": "&apos;"})
+
+
 def build_experiment_context():
     rows, data_lines = compact_measurement_context()
     frequency = float(config.get("frequency_hz", 0.0) or 0.0)
@@ -1040,45 +1253,75 @@ def build_experiment_context():
     fit = get_fit_for_chat()
 
     context_lines = [
-        "장치: Arduino UNO Q 기반 음향 정상파 자동 스캔 장치",
-        f"사용 관 종류 = {tube_type_ko}",
-        f"사용 관 길이 = {tube_length_cm:.3f} cm" if tube_length_cm > 0 else "사용 관 길이 = 미입력",
-        f"실험실 온도 = {temperature_c:.2f} ℃" if temperature_c is not None else "실험실 온도 = 미입력",
-        "기구: 스텝모터 + 실/도르래로 마이크를 한 방향으로 이동, 새 실험 전 수동 복귀",
-        "현재 빠른 스캔 설정: 모터 20 RPM, 이동 후 안정화 0.5 s, 200 ms Vpp window 10회, 최대/최소 1개씩 제외 후 8개 평균/표준편차",
-        "현재 Python fitting 방식: clipped=1 점만 제외하고 나머지 비클리핑 점 전체를 동일 가중 SSE로 fitting; 표준편차 가중/robust loss/자동 이상점 제거는 사용하지 않음",
-        f"설정 주파수 f = {frequency:.3f} Hz" if frequency > 0 else "설정 주파수 f = 미입력",
-        f"1회 이동당 추정 거리 = {dx:.4f} cm" if dx > 0 else "1회 이동당 추정 거리 = 미보정(그래프 x축은 회차)",
-        f"현재 측정 위치 범위 = {min(positions):.3f} ~ {max(positions):.3f} cm" if positions else "현재 측정 위치 범위 = 아직 없음",
-        f"설정 마지막 회차 = {max_cycles}회",
-        f"첫 데이터 위치 = {'확인된 시작 위치(1회차 = 0 cm)' if first_at_start else '1회 이동 후'}",
-        f"데이터 출처 = {'불러온 실험 데이터' if is_imported_mode() else '현재 MCU 실시간 측정 데이터'}",
-        f"현재 저장된 측정점 = {len(rows)}개, clipping 의심점 = {clipped_count}개",
+        '<현재_실험_스냅샷 최신성="현재_요청_시점" 제공_횟수="이_요청에서_1회">',
+        "  <장치_정보>",
+        "    <장치>Arduino UNO Q 기반 음향 정상파 자동 스캔 장치</장치>",
+        f"    <관_종류>{_xml_text(tube_type_ko)}</관_종류>",
+        (f'    <관_길이 단위="cm">{tube_length_cm:.3f}</관_길이>'
+         if tube_length_cm > 0 else '    <관_길이 상태="미입력" />'),
+        (f'    <실험실_온도 단위="℃">{temperature_c:.2f}</실험실_온도>'
+         if temperature_c is not None else '    <실험실_온도 상태="미입력" />'),
+        "    <이동_기구>스텝모터와 실/도르래로 마이크를 한 방향으로 이동하며 새 실험 전에는 수동으로 복귀</이동_기구>",
+        "  </장치_정보>",
+        "  <측정_설정>",
+        "    <빠른_스캔>모터 20 RPM, 이동 후 안정화 0.5 s, 200 ms Vpp window 10회, 최대값과 최소값을 1개씩 제외한 8개의 평균과 표준편차</빠른_스캔>",
+        (f'    <설정_주파수 단위="Hz">{frequency:.3f}</설정_주파수>'
+         if frequency > 0 else '    <설정_주파수 상태="미입력" />'),
+        (f'    <회차당_추정_이동거리 단위="cm">{dx:.4f}</회차당_추정_이동거리>'
+         if dx > 0 else '    <회차당_추정_이동거리 상태="미보정">그래프 x축은 회차</회차당_추정_이동거리>'),
+        (f'    <측정_위치_범위 단위="cm"><최솟값>{min(positions):.3f}</최솟값><최댓값>{max(positions):.3f}</최댓값></측정_위치_범위>'
+         if positions else '    <측정_위치_범위 상태="측정값_없음" />'),
+        f"    <마지막_회차>{max_cycles}</마지막_회차>",
+        f"    <첫_데이터_위치>{'확인된 시작 위치(1회차 = 0 cm)' if first_at_start else '1회 이동 후'}</첫_데이터_위치>",
+        f"    <데이터_출처>{'불러온 실험 데이터' if is_imported_mode() else '현재 MCU 실시간 측정 데이터'}</데이터_출처>",
+        f"    <저장된_측정점_수>{len(rows)}</저장된_측정점_수>",
+        f"    <clipping_의심점_수>{clipped_count}</clipping_의심점_수>",
+        "  </측정_설정>",
+        "  <fitting_방법>",
+        "    <제외_기준>clipped=1인 점만 제외</제외_기준>",
+        "    <오차_함수>나머지 비클리핑 점 전체에 동일 가중치를 적용한 제곱오차합(SSE)</오차_함수>",
+        "    <사용하지_않는_방법>표준편차 가중, robust loss, 자동 이상점 제거</사용하지_않는_방법>",
+        "  </fitting_방법>",
     ]
 
     if isinstance(fit, dict) and fit.get("ok"):
         context_lines.extend(
             [
-                "결정론적 Python fitting 결과:",
-                f"- wavelength λ = {float(fit['wavelength_cm']):.4f} cm",
-                f"- node spacing λ/2 = {float(fit['node_spacing_cm']):.4f} cm",
-                f"- R^2 = {float(fit['r2']):.5f}" if fit.get("r2") is not None else "- R^2 = 없음",
-                f"- baseline = {float(fit['baseline_v']):.4f} V",
-                f"- amplitude = {float(fit['amplitude_v']):.4f} V",
-                f"- used points = {int(fit['used_points'])}, excluded clipped = {int(fit['excluded_clipped_points'])}",
+                '  <fitting_결과 상태="성공">',
+                f'    <파장 단위="cm">{float(fit["wavelength_cm"]):.4f}</파장>',
+                f'    <마디_간격 단위="cm">{float(fit["node_spacing_cm"]):.4f}</마디_간격>',
+                (f'    <R_제곱>{float(fit["r2"]):.5f}</R_제곱>'
+                 if fit.get("r2") is not None else '    <R_제곱 상태="계산_불가" />'),
+                f'    <baseline 단위="V">{float(fit["baseline_v"]):.4f}</baseline>',
+                f'    <amplitude 단위="V">{float(fit["amplitude_v"]):.4f}</amplitude>',
+                f'    <사용점_수>{int(fit["used_points"])}</사용점_수>',
+                f'    <제외된_clipping_점_수>{int(fit["excluded_clipped_points"])}</제외된_clipping_점_수>',
             ]
         )
         if fit.get("sound_speed_m_s") is not None:
-            context_lines.append(f"- sound speed v = {float(fit['sound_speed_m_s']):.3f} m/s")
-        context_lines.append(f"- model = {fit.get('model', '')}")
+            context_lines.append(f'    <계산된_음속 단위="m/s">{float(fit["sound_speed_m_s"]):.3f}</계산된_음속>')
+        context_lines.extend(
+            [
+                f"    <모델>{_xml_text(fit.get('model', ''))}</모델>",
+                "  </fitting_결과>",
+            ]
+        )
     else:
-        context_lines.append(f"결정론적 Python fitting 결과: 없음 ({fit.get('error', '미실행') if isinstance(fit, dict) else '미실행'})")
+        fit_error = fit.get("error", "미실행") if isinstance(fit, dict) else "미실행"
+        context_lines.append(f'  <fitting_결과 상태="없음"><사유>{_xml_text(fit_error)}</사유></fitting_결과>')
 
     if data_lines:
-        context_lines.append("현재 측정 데이터 전체(CSV; 이 요청에서 1회만 제공):")
-        context_lines.extend(data_lines)
+        context_lines.extend(
+            [
+                '  <측정_데이터 형식="CSV" 제공_횟수="이_요청에서_1회">',
+                _xml_text("\n".join(data_lines)),
+                "  </측정_데이터>",
+            ]
+        )
     else:
-        context_lines.append("현재 측정 데이터 전체: 아직 없음")
+        context_lines.append('  <측정_데이터 상태="없음" />')
+
+    context_lines.append("</현재_실험_스냅샷>")
 
     return "\n".join(context_lines)
 
@@ -1087,15 +1330,18 @@ def get_chat_history_text(session_id):
     with chat_sessions_lock:
         history = list(chat_sessions.get(session_id, []))
     if not history:
-        return "(이전 대화 없음)"
-    parts = []
-    for item in history[-CHAT_HISTORY_TURNS * 2 :]:
-        role = "사용자" if item.get("role") == "user" else "보조자"
-        parts.append(f"{role}: {item.get('content', '')}")
+        return f'<최근_대화 상태="없음" 최대_턴="{CHAT_HISTORY_TURNS}" />'
+    parts = [f'<최근_대화 최대_턴="{CHAT_HISTORY_TURNS}" 용도="질문_의도와_연속성_파악">']
+    for index, item in enumerate(history[-CHAT_HISTORY_TURNS * 2 :], start=1):
+        role = "학생" if item.get("role") == "user" else "챗봇"
+        parts.append(f'  <메시지 순서="{index}" 역할="{role}">{_xml_text(item.get("content", ""))}</메시지>')
+    parts.append("</최근_대화>")
     return "\n".join(parts)
 
 
 def append_chat_history(session_id, role, content):
+    # Keep the original text in memory. XML escaping happens only when the next
+    # request serializes the history, so stored Q/A and the research log stay raw.
     with chat_sessions_lock:
         history = chat_sessions.setdefault(session_id, [])
         history.append({"role": role, "content": str(content)})
@@ -1104,7 +1350,7 @@ def append_chat_history(session_id, role, content):
             del history[:-max_items]
 
 
-def api_chat(question="", session_id="default"):
+def api_chat(question="", session_id="default", research_session_id="", experiment_id=""):
     global chat_llm, chat_llm_error
     question = str(question or "").strip()
     session_id = str(session_id or "default").strip()[:80] or "default"
@@ -1130,16 +1376,19 @@ def api_chat(question="", session_id="default"):
         #    accumulated inside the Brick across turns.
         experiment_context = build_experiment_context()
         history_text = get_chat_history_text(session_id)
-        prompt = f"""[현재 실험 스냅샷 - 최신 자료, 이 요청에서 한 번만 제공]
+        prompt = f"""<챗봇_요청>
 {experiment_context}
 
-[최근 대화 - 최대 {CHAT_HISTORY_TURNS}턴, 질문/답변 텍스트만 포함]
 {history_text}
 
-[현재 사용자 질문]
-{question}
+<학생_질문>{_xml_text(question)}</학생_질문>
 
-현재 실험 스냅샷을 수치적 사실의 기준으로 사용하고, 최근 대화는 질문의 의도와 연속성을 이해하는 데만 사용하여 답하라."""
+<과제>
+  <사실_기준>현재 실험 스냅샷을 수치적 사실의 기준으로 사용한다.</사실_기준>
+  <최근_대화_사용_범위>질문의 의도와 연속성을 이해하는 데만 사용한다.</최근_대화_사용_범위>
+  <응답_기준>시스템 프롬프트의 <학습자_수준>과 <학생에게_보이는_응답_방식>을 적용하여 답한다.</응답_기준>
+</과제>
+</챗봇_요청>"""
 
         with chat_lock:
             answer = chat_llm.chat(prompt)
@@ -1150,16 +1399,35 @@ def api_chat(question="", session_id="default"):
         # Store ONLY Q/A text. The experiment snapshot/prompt is deliberately not stored.
         append_chat_history(session_id, "user", question)
         append_chat_history(session_id, "assistant", answer)
+        context_points = len(measurement_payload())
+        research_ids = clean_research_ids(research_session_id, experiment_id)
+        if research_ids[0]:
+            try:
+                activity_log.record_chat_exchange(
+                    research_ids[0], research_ids[1], question, answer,
+                    CHAT_MODEL_ID, context_points, dict(config),
+                )
+            except Exception as exc:
+                research_warning("record_chat_exchange", exc)
         return {
             "ok": True,
             "answer": answer,
             "model": CHAT_MODEL_ID,
-            "context_points": len(measurement_payload()),
+            "context_points": context_points,
             "history_turn_limit": CHAT_HISTORY_TURNS,
             "context_mode": "fresh_snapshot_once_per_request",
         }
     except Exception as exc:
         print(f"CHATBOT FAILED: {exc}")
+        research_ids = clean_research_ids(research_session_id, experiment_id)
+        if research_ids[0]:
+            try:
+                activity_log.record_chat_error(
+                    research_ids[0], research_ids[1], question, str(exc),
+                    CHAT_MODEL_ID, dict(config),
+                )
+            except Exception as log_exc:
+                research_warning("record_chat_error", log_exc)
         return {"ok": False, "error": str(exc), "model": CHAT_MODEL_ID}
 
 
@@ -1253,6 +1521,11 @@ ui.expose_api("GET", "/api/chat", api_chat)
 ui.expose_api("GET", "/api/chat-clear", api_chat_clear)
 ui.expose_api("GET", "/api/chat-restore-message", api_chat_restore_message)
 ui.expose_api("GET", "/api/chat-info", api_chat_info)
+
+# Store browser interactions and research records directly in one durable SQLite DB.
+# This app registers its existing endpoints with the literal "/api/..." prefix,
+# so the activity routes must follow the same convention.
+register_activity_log_routes(ui, routes_include_api_prefix=True)
 
 threading.Thread(target=background_sync_loop, daemon=True).start()
 App.run()

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Open Standing Wave Lab</title>
+  <title>소리 정상파 자동 측정 실험</title>
   <style>
     * { box-sizing: border-box; }
     body { font-family: system-ui, -apple-system, sans-serif; max-width: 1080px; margin: 24px auto; padding: 0 14px 40px; line-height: 1.5; color: #222; }
@@ -108,13 +108,13 @@
   </style>
 </head>
 <body>
-  <h1>Open Standing Wave Lab</h1>
-  <div class="sub">Arduino UNO Q 기반 정상파 자동 스캔 · 수동 복귀 기준점 · 추정 위치 보정 · 반복측정 불확실성 · 수동/수치 파장 분석</div>
+  <h1>소리 정상파 자동 측정 실험</h1>
+  <div class="sub">마이크를 관 안에서 움직이며 소리의 세기를 자동으로 측정하고, 정상파 모양과 파장을 알아봅니다.</div>
 
   <div class="card">
     <h2>1. 실험 설정</h2>
     <div class="controls">
-      <div class="field"><label for="frequency">공명 주파수 f</label><input id="frequency" type="number" min="0" step="0.1" placeholder="예: 980"><span>Hz</span></div>
+      <div class="field"><label for="frequency">공명 진동수 f</label><input id="frequency" type="number" min="0" step="0.1" placeholder="예: 980"><span>Hz</span></div>
       <div class="field"><label for="tubeLength">관 길이</label><input id="tubeLength" type="number" min="0" step="0.1" placeholder="예: 90"><span>cm</span></div>
       <div class="field"><label for="tubeType">관 종류</label><select id="tubeType"><option value="open">개관 (양쪽 열림)</option><option value="one_end_closed">한쪽이 막힌 관</option><option value="unknown">미지정</option></select></div>
       <div class="field"><label for="temperature">실험실 온도</label><input id="temperature" type="number" min="-50" max="80" step="0.1" placeholder="예: 27"><span>℃</span></div>
@@ -161,26 +161,26 @@
 
   <div class="card">
     <h2>3. 실시간 정상파 그래프</h2>
-    <div class="sub" id="axisNote">가로축: 회차 / 세로축: 마이크 출력 peak-to-peak 전압</div>
+    <div class="sub" id="axisNote">가로축: 회차 / 세로축: 마이크 신호의 크기 Vpp(최댓값−최솟값)</div>
     <div class="chart-wrap" id="chartWrap"><canvas id="chart"></canvas><div id="chartTooltip" class="chart-tooltip"></div></div>
     <div class="legend">
-      <span>● 측정 평균</span><span>│ 표준편차</span><span>× clipping 의심</span><span>— curve fit</span><span>◆ 학생이 선택한 마디 후보</span>
+      <span>● 측정 평균</span><span>│ 측정값의 흔들림</span><span>× 입력 범위 초과 의심</span><span>— 계산으로 맞춘 곡선</span><span>◆ 학생이 선택한 점</span>
     </div>
-    <div class="warning">그래프에서 <b>인접한 두 마디(최소점)</b>를 차례로 터치하면 학생 계산으로 λ = 2Δx를 구합니다. 위치 보정값이 입력되어 있어야 활성화됩니다.</div>
+    <div class="warning">그래프에서 <b>서로 이웃한 같은 종류의 두 점</b>을 고르세요. <b>낮은 점(마디) 두 개</b> 또는 <b>높은 점(배) 두 개</b>를 고르면, 두 점 사이 거리의 2배로 파장(λ)을 계산합니다. 낮은 점과 높은 점을 섞어 고르면 안 됩니다. 위치 보정값이 입력되어 있어야 사용할 수 있습니다.</div>
   </div>
 
   <div class="card">
     <h2>4. 파장 분석</h2>
     <div class="analysis">
       <div class="analysis-box">
-        <strong>학생의 수동 마디 선택</strong>
-        <div id="manualResult" class="muted" style="margin-top:8px">아직 두 마디를 선택하지 않았습니다.</div>
+        <strong>그래프에서 두 점 고르기</strong>
+        <div id="manualResult" class="muted" style="margin-top:8px">낮은 점 두 개 또는 높은 점 두 개를 선택하세요.</div>
         <div style="margin-top:10px"><button onclick="clearNodes()">선택 지우기</button></div>
       </div>
       <div class="analysis-box">
-        <strong>수학적 curve fitting</strong>
-        <div class="muted" style="margin-top:6px">clipping 의심점을 제외하고 <code>baseline + amplitude·|sin(2πx/λ+φ)|</code> 모델을 맞춥니다.</div>
-        <div style="margin-top:10px"><button onclick="runFit()">Curve fitting 실행</button></div>
+        <strong>전체 그래프에서 파장 계산</strong>
+        <div class="muted" style="margin-top:6px">입력 범위를 넘은 것으로 표시된 점은 빼고, 측정점 전체에 정상파 곡선을 맞춥니다(fitting).</div>
+        <div style="margin-top:10px"><button onclick="runFit()">파장 계산하기</button></div>
         <div id="fitResult" class="muted" style="margin-top:8px">아직 실행하지 않았습니다.</div>
       </div>
     </div>
@@ -209,7 +209,7 @@
     <div id="chatMessages" class="chat-messages"></div>
     <div class="chat-suggestions">
       <button type="button" data-chat-question="현재 데이터에서 파장은 얼마인가요?">파장은?</button>
-      <button type="button" data-chat-question="현재 fitting 결과를 해석해 주세요.">fitting 해석</button>
+      <button type="button" data-chat-question="전체 그래프에서 계산한 파장 결과를 쉽게 설명해 주세요.">계산 결과</button>
       <button type="button" data-chat-question="마디와 배는 그래프에서 어떻게 찾나요?">마디·배</button>
       <button type="button" data-chat-question="이 실험에서 오차가 생길 수 있는 원인을 설명해 주세요.">오차 원인</button>
     </div>
@@ -294,13 +294,233 @@ let jogHeartbeatInFlight = false;
 let chatBusy = false;
 let bundleImportInFlight = false;
 let lastChatModel = 'google:gemini-3.5-flash-lite';
-const CHAT_SESSION_KEY = 'standingWaveChatSessionV1';
-const CHAT_MESSAGES_KEY = 'standingWaveChatMessagesV1';
-let chatSessionId = sessionStorage.getItem(CHAT_SESSION_KEY);
-if (!chatSessionId) {
-  chatSessionId = (crypto?.randomUUID?.() || `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-  sessionStorage.setItem(CHAT_SESSION_KEY, chatSessionId);
+const ACTIVITY_APP_VERSION = 'standing-wave-lab-research-v3.0';
+const ACTIVITY_QUEUE_KEY = 'standingWavePendingActivityV1';
+const RESEARCH_SESSION_KEY = 'standingWaveResearchSessionV2';
+const RESEARCH_EXPERIMENT_KEY = 'standingWaveResearchExperimentV2';
+function newResearchUuid(prefix) {
+  if (crypto?.randomUUID) return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (crypto?.getRandomValues) crypto.getRandomValues(bytes);
+  else for (let i=0;i<bytes.length;i++) bytes[i]=Math.floor(Math.random()*256);
+  bytes[6]=(bytes[6]&0x0f)|0x40;
+  bytes[8]=(bytes[8]&0x3f)|0x80;
+  const hex=[...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
 }
+let researchSessionId = sessionStorage.getItem(RESEARCH_SESSION_KEY);
+if (!researchSessionId) {
+  researchSessionId = newResearchUuid('session');
+  sessionStorage.setItem(RESEARCH_SESSION_KEY, researchSessionId);
+}
+let researchExperimentId = sessionStorage.getItem(RESEARCH_EXPERIMENT_KEY);
+if (!researchExperimentId) {
+  researchExperimentId = newResearchUuid('experiment');
+  sessionStorage.setItem(RESEARCH_EXPERIMENT_KEY, researchExperimentId);
+}
+const ACTIVITY_SESSION_ID = researchSessionId;
+const ACTIVITY_STARTED_AT = performance.now();
+let activityQueue = [];
+let activityFlushTimer = null;
+let activityFlushInFlight = false;
+let activityRetryMs = 1000;
+let activityInputTimers = new WeakMap();
+const CHAT_MESSAGES_KEY = 'standingWaveChatMessagesV1';
+let chatSessionId = researchSessionId;
+
+function localIsoTimestamp(date=new Date()) {
+  const pad=(value,width=2)=>String(value).padStart(width,'0');
+  const offsetMinutes=-date.getTimezoneOffset();
+  const sign=offsetMinutes>=0?'+':'-';
+  const absoluteOffset=Math.abs(offsetMinutes);
+  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}`
+    + `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+    + `.${pad(date.getMilliseconds(),3)}${sign}${pad(Math.floor(absoluteOffset/60))}`
+    + `:${pad(absoluteOffset%60)}`;
+}
+
+function addResearchIds(params=new URLSearchParams()) {
+  params.set('research_session_id', researchSessionId);
+  params.set('experiment_id', researchExperimentId);
+  return params;
+}
+
+function rotateResearchExperiment() {
+  researchExperimentId = newResearchUuid('experiment');
+  sessionStorage.setItem(RESEARCH_EXPERIMENT_KEY, researchExperimentId);
+}
+
+function compactActivityValue(value, maxLength=1200) {
+  const text = String(value ?? '');
+  return text.length <= maxLength ? text : text.slice(0, maxLength) + `…[${text.length-maxLength}자 생략]`;
+}
+
+function activityTargetInfo(element) {
+  if (!(element instanceof Element)) return {target_id:'', target_label:''};
+  const target = element.closest('button,input,select,textarea,canvas') || element;
+  let label = '';
+  if (target.id) {
+    const labelElement = document.querySelector(`label[for="${CSS.escape(target.id)}"]`);
+    label = labelElement?.textContent?.trim() || '';
+  }
+  if (!label && target instanceof HTMLButtonElement) label = target.textContent?.trim() || target.title || '';
+  if (!label) label = target.getAttribute('aria-label') || target.getAttribute('placeholder') || target.tagName.toLowerCase();
+  return {target_id: target.id || target.getAttribute('name') || '', target_label: compactActivityValue(label, 160)};
+}
+
+function activityElementValue(element) {
+  if (element instanceof HTMLInputElement && element.type === 'file') {
+    return Array.from(element.files || []).map(file => ({name:file.name,size:file.size,type:file.type}));
+  }
+  if (element instanceof HTMLInputElement && (element.type === 'checkbox' || element.type === 'radio')) return element.checked;
+  if (element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) return element.value;
+  return '';
+}
+
+function savePendingActivityQueue() {
+  try {
+    const keep = activityQueue.slice(-500);
+    localStorage.setItem(ACTIVITY_QUEUE_KEY, JSON.stringify(keep));
+  } catch (_) {}
+}
+
+function restorePendingActivityQueue() {
+  try {
+    const pending = JSON.parse(localStorage.getItem(ACTIVITY_QUEUE_KEY) || '[]');
+    if (Array.isArray(pending)) activityQueue = pending.slice(-500);
+  } catch (_) { activityQueue = []; }
+}
+
+function logActivity(eventType, options={}) {
+  const event = {
+    event_uuid: newResearchUuid('event'),
+    session_id: ACTIVITY_SESSION_ID,
+    experiment_id: researchExperimentId,
+    client_time_local: localIsoTimestamp(),
+    elapsed_ms: Math.max(0, Math.round(performance.now() - ACTIVITY_STARTED_AT)),
+    event_type: compactActivityValue(eventType, 80),
+    target_id: compactActivityValue(options.target_id || '', 160),
+    target_label: compactActivityValue(options.target_label || '', 240),
+    value_text: compactActivityValue(options.value ?? '', 1200),
+    detail: options.detail && typeof options.detail === 'object' ? options.detail : {}
+  };
+  activityQueue.push(event);
+  if (activityQueue.length > 500) activityQueue.splice(0, activityQueue.length - 500);
+  savePendingActivityQueue();
+  scheduleActivityFlush(options.immediate ? 0 : 300);
+}
+
+function scheduleActivityFlush(delay=300) {
+  if (activityFlushTimer) clearTimeout(activityFlushTimer);
+  activityFlushTimer = setTimeout(() => {
+    activityFlushTimer = null;
+    flushActivityQueue();
+  }, delay);
+}
+
+const ACTIVITY_MAX_BATCH_URL_CHARS = 7000;  // keep GET URLs well below common 8-16 KB server limits
+function nextActivityBatch() {
+  const batch = [];
+  let size = 0;
+  for (const item of activityQueue) {
+    if (batch.length >= 4) break;
+    const length = encodeURIComponent(JSON.stringify(item)).length;
+    if (batch.length && size + length > ACTIVITY_MAX_BATCH_URL_CHARS) break;
+    batch.push(item);
+    size += length;
+  }
+  return batch;
+}
+
+async function flushActivityQueue({keepalive=false} = {}) {
+  if (activityFlushInFlight || !activityQueue.length) return;
+  activityFlushInFlight = true;
+  const batch = nextActivityBatch();
+  try {
+    const payload = JSON.stringify(batch);
+    const params = new URLSearchParams({payload, t:String(Date.now())});
+    const response = await fetch(`/api/activity-log?${params.toString()}`, {cache:'no-store', keepalive});
+    let result = null;
+    try { result = await response.json(); } catch (_) { result = null; }
+    if (response.ok && result?.ok) {
+      activityQueue.splice(0, batch.length);
+      activityRetryMs = 1000;
+      savePendingActivityQueue();
+      return;
+    }
+    // A request the server can never accept (bad/oversized event, URL too long) must not
+    // block every later event forever. Drop only the single offending event.
+    const permanent = (result && result.retryable === false) || [400, 413, 414, 422, 431].includes(response.status);
+    if (permanent) {
+      activityQueue.splice(0, 1);
+      console.warn('Activity event rejected and dropped:', result?.error || `HTTP ${response.status}`, batch[0]);
+      savePendingActivityQueue();
+      activityRetryMs = 1000;
+      return;
+    }
+    throw new Error(result?.error || `HTTP ${response.status}`);
+  } catch (error) {
+    console.warn('Activity log write pending; retrying:', error);
+    activityRetryMs = Math.min(10000, activityRetryMs * 2);
+  } finally {
+    activityFlushInFlight = false;
+    if (activityQueue.length) scheduleActivityFlush(activityRetryMs);
+  }
+}
+
+function adoptResearchExperimentId(newId, reason) {
+  if (!newId || newId === researchExperimentId) return;
+  const previousExperimentId = researchExperimentId;
+  researchExperimentId = newId;
+  sessionStorage.setItem(RESEARCH_EXPERIMENT_KEY, researchExperimentId);
+  logActivity('research_experiment_rotated', {
+    value:researchExperimentId,
+    detail:{previous_experiment_id:previousExperimentId, reason}
+  });
+}
+
+restorePendingActivityQueue();
+
+document.addEventListener('click', event => {
+  const target = event.target instanceof Element ? event.target.closest('button') : null;
+  if (!target) return;
+  const info = activityTargetInfo(target);
+  logActivity('button_click', {...info, value: target.dataset.chatQuestion || ''});
+}, true);
+
+document.addEventListener('input', event => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) return;
+  const oldTimer = activityInputTimers.get(target);
+  if (oldTimer) clearTimeout(oldTimer);
+  activityInputTimers.set(target, setTimeout(() => {
+    const info = activityTargetInfo(target);
+    const value = activityElementValue(target);
+    logActivity('input', {...info, value: typeof value === 'string' ? value : JSON.stringify(value)});
+    activityInputTimers.delete(target);
+  }, 450));
+}, true);
+
+document.addEventListener('change', event => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) return;
+  const oldTimer = activityInputTimers.get(target);
+  if (oldTimer) clearTimeout(oldTimer);
+  activityInputTimers.delete(target);
+  const info = activityTargetInfo(target);
+  const value = activityElementValue(target);
+  logActivity('change', {...info, value: typeof value === 'string' ? value : JSON.stringify(value)});
+}, true);
+
+window.addEventListener('error', event => logActivity('client_error', {
+  value:event.message || 'unknown error',
+  detail:{filename:event.filename || '', lineno:event.lineno || 0, colno:event.colno || 0}
+}));
+window.addEventListener('unhandledrejection', event => logActivity('unhandled_rejection', {value:String(event.reason?.message || event.reason || '')}));
+
+logActivity('page_open', {
+  detail:{app_version:ACTIVITY_APP_VERSION, experiment_id:researchExperimentId, language:navigator.language || '', user_agent:navigator.userAgent || '', screen:{width:screen.width,height:screen.height}, viewport:{width:innerWidth,height:innerHeight}}
+});
 
 [frequencyInput, tubeLengthInput, tubeTypeInput, temperatureInput, distanceInput, maxCyclesInput, firstMeasureAtStartInput].forEach(input => {
   input.addEventListener('input', () => {
@@ -447,7 +667,19 @@ async function pollStatus() {
     // Checking both data_seq and last_result_rev makes the live graph robust even if one
     // counter is reset/reconciled during an MCU restart. Input fields are NOT overwritten
     // because loadData() only synchronizes them on initial load or explicit config save.
+    if (hadState && oldBoot && newBoot && newBoot !== oldBoot) {
+      const reboot_previous_boot = oldBoot;
+      rotateResearchExperiment();
+      logActivity('research_experiment_rotated', {value:researchExperimentId, detail:{reason:'mcu_reboot', previous_boot_id:reboot_previous_boot, boot_id:newBoot}});
+    }
     if (!hadState || newSeq !== oldSeq || newRev !== oldRev || newBoot !== oldBoot) {
+      if (hadState && newRev > oldRev) {
+        logActivity('measurement_completed', {
+          target_id:'cycleState',
+          value:String(newRev),
+          detail:{previous_rev:oldRev, data_seq:newSeq, boot_id:newBoot}
+        });
+      }
       await loadData();
     }
   } catch (e) {
@@ -545,7 +777,7 @@ async function saveConfig() {
     return false;
   }
   try {
-    const params = new URLSearchParams({frequency_hz:String(f), tube_length_cm:String(tubeLength), tube_type:tubeType, temperature_c:temperature===null?'':String(temperature), distance_per_cycle_cm:String(dx), max_cycles:String(maxCycles), first_measure_at_start:String(firstAtStart), t:String(Date.now())});
+    const params = addResearchIds(new URLSearchParams({frequency_hz:String(f), tube_length_cm:String(tubeLength), tube_type:tubeType, temperature_c:temperature===null?'':String(temperature), distance_per_cycle_cm:String(dx), max_cycles:String(maxCycles), first_measure_at_start:String(firstAtStart), t:String(Date.now())}));
     const r = await fetch(`/api/config?${params.toString()}`);
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'config error');
@@ -561,7 +793,7 @@ async function saveConfig() {
     const savedTarget = config.data_mode === 'imported' ? '불러온 데이터 분석 설정을 저장했습니다.' : '실험 설정을 UNO Q에 저장했습니다.';
     const lengthText = Number(config.tube_length_cm || 0) > 0 ? `${Number(config.tube_length_cm).toFixed(1)} cm` : '미입력';
     const temperatureSavedText = (config.temperature_c !== null && config.temperature_c !== undefined && config.temperature_c !== '') ? `${Number(config.temperature_c).toFixed(1)} ℃` : '미입력';
-    setSettingsMessage(`${savedTarget} 공명 주파수 ${Number(config.frequency_hz || 0).toFixed(1)} Hz · 관 ${lengthText}, ${tubeTypeLabel(config.tube_type)} · 온도 ${temperatureSavedText} · 1회 이동 ${Number(config.distance_per_cycle_cm || 0).toFixed(3)} cm · 마지막 회차 ${Math.round(Number(config.max_cycles || maxCycles))}회 · 첫 데이터 ${config.first_measure_at_start === false ? '1회 이동 후' : '시작 위치(0 cm)'}`);
+    setSettingsMessage(`${savedTarget} 공명 진동수 ${Number(config.frequency_hz || 0).toFixed(1)} Hz · 관 ${lengthText}, ${tubeTypeLabel(config.tube_type)} · 온도 ${temperatureSavedText} · 1회 이동 ${Number(config.distance_per_cycle_cm || 0).toFixed(3)} cm · 마지막 회차 ${Math.round(Number(config.max_cycles || maxCycles))}회 · 첫 데이터 ${config.first_measure_at_start === false ? '1회 이동 후' : '시작 위치(0 cm)'}`);
     return true;
   } catch (e) { setSettingsMessage('설정 저장 오류: ' + e, true); return false; }
 }
@@ -569,7 +801,8 @@ async function saveConfig() {
 async function confirmStartPosition() {
   if (!confirm('마이크를 손으로 되감아 시작 표시선에 정확히 맞췄습니까? 이 확인은 모터를 움직이지 않고 현재 물리적 위치를 새 실험의 기준으로 선언합니다.')) return;
   try {
-    const r = await fetch(`/api/confirm-start?t=${Date.now()}`);
+    const params = addResearchIds(new URLSearchParams({t:String(Date.now())}));
+    const r = await fetch(`/api/confirm-start?${params.toString()}`);
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'start-position error');
     updateStatus(d.state);
@@ -581,8 +814,10 @@ async function startRun() {
   try {
     const configSaved = await saveConfig();
     if (!configSaved) return;
-    const r = await fetch(`/api/start?t=${Date.now()}`);
+    const params = addResearchIds(new URLSearchParams({t:String(Date.now())}));
+    const r = await fetch(`/api/start?${params.toString()}`);
     const d = await r.json();
+    adoptResearchExperimentId(d.research_experiment_id, 'server_issued_new_experiment');
     if (!d.ok) throw new Error(d.error || 'start error');
     updateStatus(d.state);
     setMessage('측정을 시작했습니다.');
@@ -593,7 +828,8 @@ async function stopRun() {
   requestedJogDirection = 0;
   if (jogHeartbeatTimer) { clearInterval(jogHeartbeatTimer); jogHeartbeatTimer = null; }
   try {
-    const r = await fetch(`/api/stop?t=${Date.now()}`);
+    const params = addResearchIds(new URLSearchParams({t:String(Date.now())}));
+    const r = await fetch(`/api/stop?${params.toString()}`);
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'stop error');
     updateStatus(d.state); await loadData();
@@ -610,13 +846,20 @@ async function resetAll() {
   if (jogHeartbeatTimer) { clearInterval(jogHeartbeatTimer); jogHeartbeatTimer = null; }
   if (!confirm('UNO Q에 저장된 현재 측정 데이터와 MCU 회차를 모두 초기화합니다. 계속하시겠습니까?')) return;
   try {
-    const r = await fetch(`/api/reset?t=${Date.now()}`);
+    const params = addResearchIds(new URLSearchParams({t:String(Date.now())}));
+    const r = await fetch(`/api/reset?${params.toString()}`);
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'reset error');
     measurements = []; selectedNodes = []; fitData = null;
     if (d.config) config = d.config;
     updateStatus(d.state); renderTable(); drawChart(); updateManualResult();
     fitResult.textContent = '아직 실행하지 않았습니다.';
+    const previousExperimentId = researchExperimentId;
+    rotateResearchExperiment();
+    logActivity('research_experiment_rotated', {
+      value:researchExperimentId,
+      detail:{previous_experiment_id:previousExperimentId}
+    });
     setMessage('측정 데이터를 초기화했습니다. 모터 코일은 해제되어 있습니다. 도르래를 손으로 되감아 마이크를 시작 표시선에 맞춘 뒤 시작 위치 확인을 누르십시오.');
   } catch (e) { setMessage('초기화 오류: ' + e, true); }
 }
@@ -651,7 +894,7 @@ function drawChart() {
   const configuredDistance = Number(config.distance_per_cycle_cm || 0);
   const firstAtStart = config.first_measure_at_start !== false;
   const defaultXMax = calibrated ? Math.max(0, configuredMaxCycles - (firstAtStart ? 1 : 0)) * configuredDistance : configuredMaxCycles;
-  axisNote.textContent = calibrated ? '가로축: 추정 위치 (cm) / 세로축: 마이크 출력 peak-to-peak 전압 (V)' : '가로축: 회차 / 세로축: 마이크 출력 peak-to-peak 전압 (V)';
+  axisNote.textContent = calibrated ? '가로축: 추정 위치 (cm) / 세로축: 마이크 신호의 크기 Vpp(최댓값−최솟값)' : '가로축: 회차 / 세로축: 마이크 신호의 크기 Vpp(최댓값−최솟값)';
   const xs = measurements.length ? measurements.map(xValue) : [0, defaultXMax];
   let xMin = measurements.length ? Math.min(...xs) : 0;
   let xMax = measurements.length ? Math.max(...xs) : defaultXMax;
@@ -776,15 +1019,21 @@ chart.addEventListener('click', ev => {
   const node={rev:best.rev,x_cm:Number(best.x_cm),avg_v:Number(best.avg_v)};
   if(selectedNodes.length>=2) selectedNodes=[];
   selectedNodes.push(node); selectedNodes.sort((a,b)=>a.x_cm-b.x_cm);
+  logActivity('chart_measurement_selected', {
+    target_id:'chart',
+    target_label:'정상파 그래프 측정점',
+    value:String(best.rev),
+    detail:{rev:Number(best.rev), x_cm:Number(best.x_cm), avg_v:Number(best.avg_v), selected_count:selectedNodes.length}
+  });
   updateManualResult(); drawChart();
 });
 
 function updateManualResult() {
   if (!(Number(config.distance_per_cycle_cm)>0)) { manualResult.textContent='위치 보정값을 먼저 입력하십시오.'; return; }
-  if (selectedNodes.length < 2) { manualResult.textContent=selectedNodes.length===1?`첫 마디 후보: ${selectedNodes[0].x_cm.toFixed(3)} cm. 두 번째 인접 마디를 선택하세요.`:'아직 두 마디를 선택하지 않았습니다.'; return; }
+  if (selectedNodes.length < 2) { manualResult.textContent=selectedNodes.length===1?`첫 번째 점: ${selectedNodes[0].x_cm.toFixed(3)} cm. 이웃한 같은 종류의 점(낮은 점끼리 또는 높은 점끼리)을 하나 더 선택하세요.`:'낮은 점 두 개 또는 높은 점 두 개를 선택하세요.'; return; }
   const dx=Math.abs(selectedNodes[1].x_cm-selectedNodes[0].x_cm), lambda=2*dx;
   const f=Number(config.frequency_hz||0); const v=f>0?f*lambda/100:null;
-  manualResult.innerHTML=`선택 위치: <b>${selectedNodes[0].x_cm.toFixed(3)} cm</b>, <b>${selectedNodes[1].x_cm.toFixed(3)} cm</b><br>Δx = <b>${dx.toFixed(3)} cm</b> → λ = 2Δx = <span class="big">${lambda.toFixed(3)} cm</span>${v?`<br>v = fλ = <b>${v.toFixed(1)} m/s</b>`:''}<br><span class="muted">두 점을 인접 마디로 가정한 학생 계산입니다.</span>`;
+  manualResult.innerHTML=`선택 위치: <b>${selectedNodes[0].x_cm.toFixed(3)} cm</b>, <b>${selectedNodes[1].x_cm.toFixed(3)} cm</b><br>두 점 사이 거리 Δx = <b>${dx.toFixed(3)} cm</b><br>파장 λ = 2Δx = <span class="big">${lambda.toFixed(3)} cm</span>${v?`<br>음속 v = fλ = <b>${v.toFixed(1)} m/s</b>`:''}<br><span class="muted">두 점을 서로 이웃한 같은 종류의 점(마디끼리 또는 배끼리)으로 보고 계산한 값입니다. 서로 다른 종류의 점을 골랐다면 다시 선택하세요.</span>`;
 }
 function clearNodes(){selectedNodes=[];updateManualResult();drawChart();}
 
@@ -792,23 +1041,24 @@ function displayFitResult(d, restored=false) {
   if(!d || !d.ok) {
     fitData=null;
     fitResult.textContent = restored
-      ? `저장된 fitting 결과 없음: ${d?.error || '계산 결과 없음'}`
-      : `Fitting 오류: ${d?.error || '계산 결과 없음'}`;
+      ? `저장된 곡선 맞춤 결과 없음: ${d?.error || '계산 결과 없음'}`
+      : `곡선 맞춤 오류: ${d?.error || '계산 결과 없음'}`;
     drawChart();
     return;
   }
   fitData=d;
   drawChart();
-  fitResult.innerHTML=`λ = <span class="big">${Number(d.wavelength_cm).toFixed(3)} cm</span><br>마디 간격 λ/2 = <b>${Number(d.node_spacing_cm).toFixed(3)} cm</b><br>R² = <b>${d.r2==null?'-':Number(d.r2).toFixed(4)}</b>${d.sound_speed_m_s?`<br>v = fλ = <b>${Number(d.sound_speed_m_s).toFixed(1)} m/s</b>`:''}<br><span class="muted">사용점 ${d.used_points}개, clipping 제외 ${d.excluded_clipped_points}개. ${restored?'실험 세트에 저장된 fitting 결과를 복원했습니다.':'보정 위치에 대한 근사 fitting입니다.'}</span>`;
+  fitResult.innerHTML=`파장 λ = <span class="big">${Number(d.wavelength_cm).toFixed(3)} cm</span><br>같은 종류의 이웃한 점 사이 거리 λ/2 = <b>${Number(d.node_spacing_cm).toFixed(3)} cm</b><br>곡선이 측정값의 모양을 설명하는 정도 R² = <b>${d.r2==null?'-':Number(d.r2).toFixed(4)}</b>${d.sound_speed_m_s?`<br>음속 v = fλ = <b>${Number(d.sound_speed_m_s).toFixed(1)} m/s</b>`:''}<br><span class="muted">사용한 점 ${d.used_points}개, 입력 범위 초과로 제외한 점 ${d.excluded_clipped_points}개. ${restored?'실험 세트에 저장된 곡선 맞춤 결과를 불러왔습니다.':'보정된 위치를 이용한 곡선 맞춤 결과입니다.'} R²가 높아도 파장 자체가 반드시 정확하다는 뜻은 아닙니다.</span>`;
 }
 
 async function runFit() {
   fitResult.textContent='계산 중...';
   try {
-    const r=await fetch(`/api/fit?t=${Date.now()}`); const d=await r.json();
+    const params=addResearchIds(new URLSearchParams({t:String(Date.now())}));
+    const r=await fetch(`/api/fit?${params.toString()}`); const d=await r.json();
     if(!d.ok) throw new Error(d.error||'fit error');
     displayFitResult(d, false);
-  } catch(e){fitData=null;fitResult.textContent='Fitting 오류: '+e;drawChart();}
+  } catch(e){fitData=null;fitResult.textContent='곡선 맞춤 오류: '+e;drawChart();}
 }
 
 function csvEscape(value) {
@@ -828,8 +1078,10 @@ function experimentBaseName() {
 }
 
 function buildMeasurementCsv() {
-  const rows=[['cycle','estimated_position_cm','avg_peak_to_peak_v','std_peak_to_peak_v','clipped','frequency_hz','tube_length_cm','tube_type','temperature_c','distance_per_cycle_cm','first_measure_at_start','max_cycles','time']];
+  const rows=[['session_id','experiment_id','cycle','estimated_position_cm','avg_peak_to_peak_v','std_peak_to_peak_v','clipped','frequency_hz','tube_length_cm','tube_type','temperature_c','distance_per_cycle_cm','first_measure_at_start','max_cycles','time']];
   for(const m of measurements) rows.push([
+    researchSessionId,
+    researchExperimentId,
     m.rev,
     m.x_cm==null?'':m.x_cm,
     m.avg_v,
@@ -959,8 +1211,10 @@ function getChatTranscriptRows() {
 }
 
 function buildChatCsv(modelName=lastChatModel) {
-  const rows=[['timestamp','role','message','model','context_points','frequency_hz','tube_length_cm','tube_type','temperature_c']];
+  const rows=[['session_id','experiment_id','timestamp','role','message','model','context_points','frequency_hz','tube_length_cm','tube_type','temperature_c']];
   for(const item of getChatTranscriptRows()) rows.push([
+    researchSessionId,
+    researchExperimentId,
     item.timestamp,
     item.role,
     item.message,
@@ -976,7 +1230,8 @@ function buildChatCsv(modelName=lastChatModel) {
 
 async function fetchLatestFitForExport() {
   try {
-    const r=await fetch(`/api/fit?t=${Date.now()}`);
+    const params=addResearchIds(new URLSearchParams({t:String(Date.now())}));
+    const r=await fetch(`/api/fit?${params.toString()}`);
     const d=await r.json();
     if(d && d.ok) { fitData=d; drawChart(); }
     return d || {ok:false,error:'빈 fitting 응답'};
@@ -1005,8 +1260,10 @@ async function downloadExperimentBundle() {
     const chatCsv=buildChatCsv(modelName);
     const fitJson=JSON.stringify({
       schema_version: '1.0',
-      exported_at: new Date().toISOString(),
+      exported_at: localIsoTimestamp(),
       experiment: {
+        session_id: researchSessionId,
+        experiment_id: researchExperimentId,
         frequency_hz: Number(config.frequency_hz||0),
         tube_length_cm: Number(config.tube_length_cm||0),
         tube_type: config.tube_type||'unknown',
@@ -1132,7 +1389,8 @@ function csvDatasetFromRows(csvRows) {
 }
 
 async function importParsedMeasurementDataset(parsed, sourceLabel='CSV') {
-  const beginParams=new URLSearchParams({
+  const importExperimentId=newResearchUuid('experiment');
+  const beginParams=addResearchIds(new URLSearchParams({
     frequency_hz:String(parsed.frequency_hz),
     tube_length_cm:String(parsed.tube_length_cm),
     tube_type:parsed.tube_type,
@@ -1142,7 +1400,8 @@ async function importParsedMeasurementDataset(parsed, sourceLabel='CSV') {
     first_measure_at_start:parsed.first_measure_at_start?'1':'0',
     total_rows:String(parsed.data.length),
     t:String(Date.now())
-  });
+  }));
+  beginParams.set('experiment_id', importExperimentId);
   let r=await fetch(`/api/import-begin?${beginParams.toString()}`); let d=await r.json();
   if(!d.ok) throw new Error(d.error||`${sourceLabel} import begin error`);
 
@@ -1156,6 +1415,7 @@ async function importParsedMeasurementDataset(parsed, sourceLabel='CSV') {
   }
   r=await fetch(`/api/import-commit?t=${Date.now()}`); d=await r.json();
   if(!d.ok) throw new Error(d.error||`${sourceLabel} import commit error`);
+  adoptResearchExperimentId(d.research_experiment_id || importExperimentId, 'dataset_import');
   config=d.config||config;
   measurements=normalizeMeasurements(d.measurements);
   selectedNodes=[]; fitData=null; configInputsDirty=false;
@@ -1413,7 +1673,7 @@ function addChatMessage(role, text, save=true, timestamp=null, contextPoints='',
   const row = document.createElement('div');
   row.className = `chat-row ${role}`;
   row.dataset.role = role;
-  row._chatTimestamp = timestamp || new Date().toISOString();
+  row._chatTimestamp = timestamp || localIsoTimestamp();
   row._chatContextPoints = contextPoints;
   row._chatModel = model || '';
   const bubble = document.createElement('div');
@@ -1468,6 +1728,13 @@ async function sendChatQuestion(questionOverride=null) {
   const question = String(questionOverride ?? chatInput.value).trim();
   if (!question) return;
 
+  logActivity('chat_question_submitted', {
+    target_id:'chatInput',
+    target_label:'정상파 실험 챗봇 질문',
+    value:question,
+    detail:{source:questionOverride===null?'typed':'suggestion', measurement_points:measurements.length}
+  });
+
   chatBusy = true;
   chatSendButton.disabled = true;
   chatInput.disabled = true;
@@ -1476,7 +1743,7 @@ async function sendChatQuestion(questionOverride=null) {
   const pending = addChatMessage('assistant', 'Gemini가 현재 실험 데이터와 fitting 결과를 확인하는 중입니다...', false);
 
   try {
-    const params = new URLSearchParams({question, session_id: chatSessionId, t: String(Date.now())});
+    const params = addResearchIds(new URLSearchParams({question, session_id: chatSessionId, t: String(Date.now())}));
     const r = await fetch(`/api/chat?${params.toString()}`);
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'chat error');
@@ -1488,11 +1755,17 @@ async function sendChatQuestion(questionOverride=null) {
     pending._chatModel = d.model || lastChatModel;
     lastChatModel = d.model || lastChatModel;
     chatModelText.textContent = `${lastChatModel} · 측정점 ${d.context_points}개`;
+    logActivity('chat_answer_received', {
+      target_id:'chatMessages',
+      value:d.answer,
+      detail:{model:lastChatModel, context_points:Number(d.context_points || 0)}
+    });
     saveChatMessagesToSession();
   } catch (e) {
     pending.className = 'chat-row system';
     pending.dataset.role = 'system';
     setChatMessageContent(pending, `챗봇 오류: ${e.message || e}`);
+    logActivity('chat_error', {target_id:'chatMessages', value:String(e.message || e)});
     saveChatMessagesToSession();
   } finally {
     chatBusy = false;
@@ -1535,12 +1808,15 @@ checkChatInfo();
 
 window.addEventListener('resize',drawChart);
 document.addEventListener('visibilitychange', () => {
+  logActivity('visibility_change', {value:document.visibilityState, immediate:document.hidden});
   if (document.hidden && requestedJogDirection !== 0) {
     stopJog(false);
   }
 });
 
-window.addEventListener('pagehide', () => {
+window.addEventListener('pagehide', event => {
+  logActivity('page_hide', {detail:{persisted:!!event.persisted}, immediate:true});
+  flushActivityQueue({keepalive:true});
   requestedJogDirection = 0;
   if (jogHeartbeatTimer) clearInterval(jogHeartbeatTimer);
   // keepalive gives the stop request a chance to leave during page navigation;
