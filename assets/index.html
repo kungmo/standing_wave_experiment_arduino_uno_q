@@ -892,12 +892,16 @@ function drawChart() {
   const calibrated = Number(config.distance_per_cycle_cm) > 0;
   const configuredMaxCycles = Math.max(1, Number(config.max_cycles || latestState?.max_cycles || 110));
   const configuredDistance = Number(config.distance_per_cycle_cm || 0);
-  const firstAtStart = config.first_measure_at_start !== false;
-  const defaultXMax = calibrated ? Math.max(0, configuredMaxCycles - (firstAtStart ? 1 : 0)) * configuredDistance : configuredMaxCycles;
+  const configuredTubeLength = Math.max(0, Number(config.tube_length_cm || 0));
+  // 처음부터 전체 측정 범위를 보여 주어 측정 중 가로축이 계속 바뀌지 않게 한다.
+  // 위치 보정이 있을 때는 (1회 이동 거리 × 마지막 회차)와 관 길이 중 큰 값을 사용한다.
+  const plannedXMax = calibrated
+    ? Math.max(configuredMaxCycles * configuredDistance, configuredTubeLength)
+    : configuredMaxCycles;
   axisNote.textContent = calibrated ? '가로축: 추정 위치 (cm) / 세로축: 마이크 신호의 크기 Vpp(최댓값−최솟값)' : '가로축: 회차 / 세로축: 마이크 신호의 크기 Vpp(최댓값−최솟값)';
-  const xs = measurements.length ? measurements.map(xValue) : [0, defaultXMax];
-  let xMin = measurements.length ? Math.min(...xs) : 0;
-  let xMax = measurements.length ? Math.max(...xs) : defaultXMax;
+  const xs = measurements.map(xValue).filter(Number.isFinite);
+  let xMin = Math.min(0, ...(xs.length ? xs : [0]));
+  let xMax = Math.max(plannedXMax, ...(xs.length ? xs : [0]));
   if (xMax <= xMin) xMax = xMin + 1;
   const yCandidates = measurements.flatMap(m => [Number(m.avg_v)+Number(m.std_v||0), Number(m.avg_v)]);
   if (fitData && fitData.fit_points) for (const p of fitData.fit_points) yCandidates.push(Number(p.predicted_v));

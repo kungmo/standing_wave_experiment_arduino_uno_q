@@ -100,6 +100,34 @@ class ActivityLog:
 
     def _initialize(self) -> None:
         with self._db() as connection:
+            # Do not modify or partly upgrade an existing legacy database.  Local-time
+            # schema v3 intentionally starts with a new DB so UTC and local timestamps
+            # can never be mixed in columns whose names have different meanings.
+            existing_tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                )
+            }
+            research_tables = {
+                "activity_sessions", "activity_events", "experiments", "measurements",
+                "experiment_transitions", "chat_messages", "analysis_results",
+            }
+            if existing_tables & research_tables:
+                schema_version = None
+                if "log_metadata" in existing_tables:
+                    row = connection.execute(
+                        "SELECT value FROM log_metadata WHERE key='schema_version'"
+                    ).fetchone()
+                    schema_version = str(row[0]) if row else None
+                if schema_version != str(SCHEMA_VERSION):
+                    raise RuntimeError(
+                        "기존 연구 DB의 스키마가 현재 로컬 시간대 스키마 v3과 다릅니다. "
+                        "자동 마이그레이션은 수행하지 않습니다. 앱을 종료한 뒤 "
+                        "data/standing_wave_activity.sqlite3를 백업하고 다른 위치로 옮기거나 "
+                        "삭제한 다음 다시 실행하십시오."
+                    )
+
             # DELETE is SQLite's crash-safe rollback-journal mode. Unlike WAL it has no
             # persistent -wal/-shm companions: after each commit only the main DB remains.
             # A short-lived -journal file can exist during a write and is intentionally
@@ -214,9 +242,6 @@ class ActivityLog:
                 );
                 """
             )
-            # Upgrade the activity-only v1 DB without deleting earlier rows.
-            if "experiment_id" not in self._columns(connection, "activity_events"):
-                connection.execute("ALTER TABLE activity_events ADD COLUMN experiment_id TEXT")
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS idx_activity_session_id ON activity_events(session_id, id);
