@@ -3,7 +3,7 @@
 #include <Stepper.h>
 #include <math.h>
 
-// Open Standing Wave Lab - Arduino UNO Q controller, v3.14 (initial-position measurement + CSV analysis mode)
+// Open Standing Wave Lab - Arduino UNO Q controller, v3.16 (verified forward direction)
 //
 // Mechanical policy for the string-and-pulley apparatus:
 // - The motor performs the forward scan and a low-speed manual JOG used only before a scan.
@@ -41,6 +41,10 @@ const int MOTOR_IN1_PIN = 8;
 const int MOTOR_IN2_PIN = 9;
 const int MOTOR_IN3_PIN = 10;
 const int MOTOR_IN4_PIN = 11;
+// Hardware calibration: which Stepper.step() sign is physically clockwise when the
+// output shaft/pulley is viewed from the front. Change only this to -1 if the first
+// on-device JOG test shows that the labels are reversed.
+const int CLOCKWISE_STEP_SIGN = 1;
 
 const unsigned long settleDelayMs = 500;
 const unsigned long sampleWindowMs = 200;
@@ -65,6 +69,8 @@ volatile int lastStdMilliVolts = 0;
 volatile int lastClipped = 0;
 volatile int positionReady = 0;  // User-confirmed start reference + intact cycle-position mapping.
 volatile int jogDirection = 0;    // -1 reverse, 0 stopped, +1 forward (scan direction).
+// User-selected physical forward direction, viewed from the motor output shaft/pulley side.
+volatile int motorForwardDirection = 1;  // +1 clockwise, -1 counterclockwise.
 unsigned long jogLastCommandMs = 0;
 int bootId = 1;  // Changes on MCU reboot so Linux can distinguish experiment sessions.
 
@@ -136,6 +142,45 @@ int set_jog_direction(int direction) {
 }
 
 int get_jog_direction() { return jogDirection; }
+
+int getMotorForwardStepSign() {
+  // Keep the physical calibration and the user's selection separate. An explicit
+  // branch makes the sign used by Stepper.step() easy to inspect and test.
+  return motorForwardDirection == -1 ? -CLOCKWISE_STEP_SIGN : CLOCKWISE_STEP_SIGN;
+}
+
+int set_motor_forward_direction(int direction) {
+  if (direction != 1 && direction != -1) return motorForwardDirection;
+  // Direction changes are only safe before an empty experiment begins.
+  if (runRequested || resetRequested || phase != 0 || jogDirection != 0 || lastResultRev > 0) {
+    return motorForwardDirection;
+  }
+  if (direction != motorForwardDirection) {
+    motorForwardDirection = direction;
+    // The user must verify the physical start point again after reversing scan direction.
+    positionReady = 0;
+  }
+  return motorForwardDirection;
+}
+
+int get_motor_forward_direction() { return motorForwardDirection; }
+
+// The Linux-to-MCU RPC uses 0/1 for the physical direction choice. This avoids
+// depending on a negative RPC argument for the persistent setting while retaining
+// the public -1/+1 representation in saved experiment data.
+int set_motor_forward_clockwise(int clockwise) {
+  int requestedDirection = clockwise ? 1 : -1;
+  int appliedDirection = set_motor_forward_direction(requestedDirection);
+  return appliedDirection == 1 ? 1 : 0;
+}
+
+int get_motor_forward_clockwise() {
+  return motorForwardDirection == 1 ? 1 : 0;
+}
+
+int get_motor_forward_step_sign() {
+  return getMotorForwardStepSign();
+}
 
 int reset_all() {
   runRequested = 0;
@@ -346,6 +391,11 @@ void setup() {
   Bridge.provide("set_run", set_run);
   Bridge.provide("set_jog_direction", set_jog_direction);
   Bridge.provide("get_jog_direction", get_jog_direction);
+  Bridge.provide("set_motor_forward_direction", set_motor_forward_direction);
+  Bridge.provide("get_motor_forward_direction", get_motor_forward_direction);
+  Bridge.provide("set_motor_forward_clockwise", set_motor_forward_clockwise);
+  Bridge.provide("get_motor_forward_clockwise", get_motor_forward_clockwise);
+  Bridge.provide("get_motor_forward_step_sign", get_motor_forward_step_sign);
   Bridge.provide("confirm_start_position", confirm_start_position);
   Bridge.provide("reset_all", reset_all);
   Bridge.provide("get_running", get_running);
@@ -391,11 +441,9 @@ void loop() {
 
     // Keep the requested JOG direction explicit and sticky. The watchdog above may
     // change JOG only to STOP (0); it never changes reverse (-1) into forward (+1).
-    if (jogDirection == 1) {
-      myStepper.step(1);
-    } else if (jogDirection == -1) {
-      myStepper.step(-1);
-    }
+    int jogStepSign = getMotorForwardStepSign();
+    if (jogDirection < 0) jogStepSign = -jogStepSign;
+    myStepper.step(jogStepSign);
     delay(1);
     return;
   }
@@ -440,7 +488,7 @@ void loop() {
 
     case 1:
       // One step per loop keeps STOP responsive and releases the coils immediately afterward.
-      myStepper.step(1);
+      myStepper.step(getMotorForwardStepSign());
       stepIndex += 1;
       if (stepIndex >= stepsPerRevolution) {
         stepIndex = stepsPerRevolution;

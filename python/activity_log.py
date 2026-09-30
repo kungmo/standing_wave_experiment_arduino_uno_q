@@ -8,23 +8,34 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MAX_PAYLOAD_BYTES = 64 * 1024
 MAX_EVENTS_PER_BATCH = 25
 MAX_ACTIVITY_VALUE_LENGTH = 4_000
 MAX_CHAT_MESSAGE_LENGTH = 100_000
 TERMINAL_STATUSES = {"completed", "stopped", "reset", "start_failed", "abandoned", "imported"}
-# An experiment_id in one of these states must never receive new measurements.
+# These states are normally immutable. A completed live scan has one narrow exception:
+# it may be reopened when the same MCU dataset is intact and only max_cycles increased.
 CLOSED_STATUSES = {"completed", "reset", "imported", "abandoned"}
+
+APP_TIMEZONE_NAME = os.environ.get("STANDING_WAVE_TIMEZONE", "Asia/Seoul").strip() or "Asia/Seoul"
+try:
+    APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
+except ZoneInfoNotFoundError:
+    if APP_TIMEZONE_NAME == "Asia/Seoul":
+        APP_TIMEZONE = timezone(timedelta(hours=9), name="KST")
+    else:
+        APP_TIMEZONE = datetime.now().astimezone().tzinfo
 
 
 def local_now() -> str:
-    """Return the computer's current local time with its UTC offset."""
-    return datetime.now().astimezone().isoformat(timespec="milliseconds")
+    """Return the configured research timezone with its explicit UTC offset."""
+    return datetime.now(APP_TIMEZONE).isoformat(timespec="milliseconds")
 
 
 def _text(value: Any, limit: int) -> str:
@@ -101,7 +112,7 @@ class ActivityLog:
     def _initialize(self) -> None:
         with self._db() as connection:
             # Do not modify or partly upgrade an existing legacy database.  Local-time
-            # schema v3 intentionally starts with a new DB so UTC and local timestamps
+            # schema v4 intentionally starts with a new DB so UTC and KST timestamps
             # can never be mixed in columns whose names have different meanings.
             existing_tables = {
                 str(row[0])
@@ -122,7 +133,7 @@ class ActivityLog:
                     schema_version = str(row[0]) if row else None
                 if schema_version != str(SCHEMA_VERSION):
                     raise RuntimeError(
-                        "기존 연구 DB의 스키마가 현재 로컬 시간대 스키마 v3과 다릅니다. "
+                        f"기존 연구 DB의 스키마가 현재 로컬 시간대 스키마 v{SCHEMA_VERSION}과 다릅니다. "
                         "자동 마이그레이션은 수행하지 않습니다. 앱을 종료한 뒤 "
                         "data/standing_wave_activity.sqlite3를 백업하고 다른 위치로 옮기거나 "
                         "삭제한 다음 다시 실행하십시오."
@@ -302,14 +313,14 @@ class ActivityLog:
                 "INSERT OR REPLACE INTO log_metadata(key,value) VALUES('schema_version',?)",
                 (str(SCHEMA_VERSION),),
             )
-            current_local = datetime.now().astimezone()
+            current_local = datetime.now(APP_TIMEZONE)
             offset = current_local.strftime("%z")
             if len(offset) == 5:
                 offset = f"{offset[:3]}:{offset[3:]}"
             connection.executemany(
                 "INSERT OR REPLACE INTO log_metadata(key,value) VALUES(?,?)",
                 (
-                    ("local_timezone", current_local.tzname() or ""),
+                    ("local_timezone", APP_TIMEZONE_NAME),
                     ("local_utc_offset", offset),
                 ),
             )
@@ -371,14 +382,22 @@ class ActivityLog:
                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(experiment_id) DO UPDATE SET
                    updated_at_server_local=excluded.updated_at_server_local,
-                   frequency_hz=COALESCE(excluded.frequency_hz,experiments.frequency_hz),
-                   distance_per_cycle_cm=COALESCE(excluded.distance_per_cycle_cm,experiments.distance_per_cycle_cm),
-                   max_cycles=COALESCE(excluded.max_cycles,experiments.max_cycles),
-                   first_measure_at_start=COALESCE(excluded.first_measure_at_start,experiments.first_measure_at_start),
-                   tube_length_cm=COALESCE(excluded.tube_length_cm,experiments.tube_length_cm),
-                   tube_type=CASE WHEN excluded.tube_type<>'' THEN excluded.tube_type ELSE experiments.tube_type END,
-                   temperature_c=COALESCE(excluded.temperature_c,experiments.temperature_c),
-                   data_mode=CASE WHEN excluded.data_mode<>'' THEN excluded.data_mode ELSE experiments.data_mode END""",
+                   frequency_hz=CASE WHEN experiments.status IN ('completed','reset','imported','abandoned')
+                                     THEN experiments.frequency_hz ELSE COALESCE(excluded.frequency_hz,experiments.frequency_hz) END,
+                   distance_per_cycle_cm=CASE WHEN experiments.status IN ('completed','reset','imported','abandoned')
+                                              THEN experiments.distance_per_cycle_cm ELSE COALESCE(excluded.distance_per_cycle_cm,experiments.distance_per_cycle_cm) END,
+                   max_cycles=CASE WHEN experiments.status IN ('completed','reset','imported','abandoned')
+                                   THEN experiments.max_cycles ELSE COALESCE(excluded.max_cycles,experiments.max_cycles) END,
+                   first_measure_at_start=CASE WHEN experiments.status IN ('completed','reset','imported','abandoned')
+                                               THEN experiments.first_measure_at_start ELSE COALESCE(excluded.first_measure_at_start,experiments.first_measure_at_start) END,
+                   tube_length_cm=CASE WHEN experiments.status IN ('completed','reset','imported','abandoned')
+                                       THEN experiments.tube_length_cm ELSE COALESCE(excluded.tube_length_cm,experiments.tube_length_cm) END,
+                   tube_type=CASE WHEN experiments.status IN ('completed','reset','imported','abandoned')
+                                  THEN experiments.tube_type WHEN excluded.tube_type<>'' THEN excluded.tube_type ELSE experiments.tube_type END,
+                   temperature_c=CASE WHEN experiments.status IN ('completed','reset','imported','abandoned')
+                                      THEN experiments.temperature_c ELSE COALESCE(excluded.temperature_c,experiments.temperature_c) END,
+                   data_mode=CASE WHEN experiments.status IN ('completed','reset','imported','abandoned')
+                                  THEN experiments.data_mode WHEN excluded.data_mode<>'' THEN excluded.data_mode ELSE experiments.data_mode END""",
             (experiment_id, session_id, now, now, status, c["frequency_hz"],
              c["distance_per_cycle_cm"], c["max_cycles"], c["first_measure_at_start"],
              c["tube_length_cm"], c["tube_type"], c["temperature_c"], c["data_mode"]),
@@ -451,9 +470,89 @@ class ActivityLog:
             try:
                 self._ensure_session(db,session_id,now)
                 self._ensure_experiment(db,session_id,experiment_id,now,config,status)
+                # Saving a larger end cycle after a completed live scan is a declaration
+                # that the user intends to extend the same MCU dataset. Preserve every
+                # other completed-run setting and change only this upper bound.
+                requested_max = _int(config.get("max_cycles"))
+                row = db.execute(
+                    """SELECT status,last_cycle,max_cycles,frequency_hz,distance_per_cycle_cm,
+                              first_measure_at_start,tube_length_cm,tube_type,temperature_c,data_mode
+                       FROM experiments WHERE experiment_id=?""",
+                    (experiment_id,),
+                ).fetchone()
+                c = self._config(config)
+                same_settings = bool(row) and all(
+                    (_float(row[key]) is None and _float(c[key]) is None)
+                    or (_float(row[key]) is not None and _float(c[key]) is not None
+                        and abs(_float(row[key]) - _float(c[key])) <= 1e-9)
+                    for key in ("frequency_hz", "distance_per_cycle_cm", "tube_length_cm", "temperature_c")
+                )
+                same_settings = same_settings and bool(row) \
+                    and int(row["first_measure_at_start"] or 0) == int(c["first_measure_at_start"] or 0) \
+                    and str(row["tube_type"] or "") == str(c["tube_type"] or "") \
+                    and str(c["data_mode"] or "") == "live"
+                if (status == "prepared" and requested_max is not None and same_settings
+                        and row["status"] == "completed" and row["data_mode"] == "live"
+                        and requested_max > int(row["last_cycle"] or 0)
+                        and requested_max > int(row["max_cycles"] or 0)):
+                    db.execute("UPDATE experiments SET max_cycles=?,updated_at_server_local=? WHERE experiment_id=?",
+                               (requested_max,now,experiment_id))
                 db.commit()
             except Exception:
                 db.rollback(); raise
+
+    def _completed_extension_cycle(self, db, experiment_id: str, config: dict[str, Any],
+                                   state: dict[str, Any]) -> int | None:
+        """Return the last stored cycle only for a provably continuous extension."""
+        row = db.execute(
+            """SELECT status,last_cycle,frequency_hz,distance_per_cycle_cm,max_cycles,
+                      first_measure_at_start,tube_length_cm,tube_type,temperature_c,data_mode
+               FROM experiments WHERE experiment_id=?""",
+            (experiment_id,),
+        ).fetchone()
+        if row is None or row["status"] != "completed" or row["data_mode"] != "live":
+            return None
+        last_cycle = int(row["last_cycle"] or 0)
+        state_last = _int(state.get("last_result_rev"))
+        state_max = _int(state.get("max_cycles"))
+        requested_max = _int(config.get("max_cycles"))
+        if (last_cycle < 1 or state_last != last_cycle or state_max is None
+                or requested_max is None or state_max <= last_cycle or requested_max <= last_cycle
+                or not bool(state.get("position_ready"))):
+            return None
+
+        stored_max = db.execute(
+            "SELECT COALESCE(MAX(cycle),0) FROM measurements WHERE experiment_id=?",
+            (experiment_id,),
+        ).fetchone()[0]
+        if int(stored_max or 0) != last_cycle:
+            return None
+
+        boot_id = _int(state.get("boot_id"))
+        boots = db.execute(
+            """SELECT MIN(boot_id),MAX(boot_id),COUNT(boot_id)
+               FROM measurements WHERE experiment_id=?""",
+            (experiment_id,),
+        ).fetchone()
+        if (boot_id is None or int(boots[2] or 0) < 1
+                or _int(boots[0]) != boot_id or _int(boots[1]) != boot_id):
+            return None
+
+        c = self._config(config)
+        for key in ("frequency_hz", "distance_per_cycle_cm", "tube_length_cm", "temperature_c"):
+            old, new = _float(row[key]), _float(c[key])
+            if old is None or new is None:
+                if old is not None or new is not None:
+                    return None
+            elif abs(old - new) > 1e-9:
+                return None
+        if int(row["first_measure_at_start"] or 0) != int(c["first_measure_at_start"] or 0):
+            return None
+        if str(row["tube_type"] or "") != str(c["tube_type"] or ""):
+            return None
+        if str(c["data_mode"] or "") != "live":
+            return None
+        return last_cycle
 
     def _reuse_block_reason(self, db, experiment_id: str, state: dict[str, Any], require_fresh: bool = False) -> str | None:
         row = db.execute("SELECT status FROM experiments WHERE experiment_id=?", (experiment_id,)).fetchone()
@@ -477,9 +576,9 @@ class ActivityLog:
                          require_fresh: bool = False) -> str:
         """Start or resume an experiment and return the experiment_id actually used.
 
-        A closed experiment (completed/reset/imported/abandoned) or one measured under a
-        different MCU boot is never reopened; a fresh UUID is issued instead so that old
-        rows cannot be overwritten by new cycle numbers.
+        A closed experiment normally receives a fresh UUID. The sole exception is a
+        completed live scan whose same-boot MCU buffer is intact and whose end cycle was
+        increased; that scan resumes under the same UUID and only new cycle rows are added.
         """
         session_id, experiment_id, now = _id(session_id,"session_id"), _id(experiment_id,"experiment_id"), local_now()
         state = state if isinstance(state, dict) else {}
@@ -487,7 +586,13 @@ class ActivityLog:
             db.execute("BEGIN IMMEDIATE")
             try:
                 self._ensure_session(db,session_id,now)
-                replaced_from, blocked = None, self._reuse_block_reason(db, experiment_id, state, require_fresh)
+                extension_cycle = None if require_fresh else self._completed_extension_cycle(
+                    db, experiment_id, config, state
+                )
+                replaced_from = None
+                blocked = None if extension_cycle is not None else self._reuse_block_reason(
+                    db, experiment_id, state, require_fresh
+                )
                 if blocked:
                     replaced_from, experiment_id = experiment_id, str(uuid.uuid4())
                 self._ensure_experiment(db,session_id,experiment_id,now,config,"running")
@@ -495,18 +600,25 @@ class ActivityLog:
                               started_at_server_local=COALESCE(started_at_server_local,?),
                               ended_at_server_local=NULL,stop_reason=NULL,
                               start_state_json=CASE WHEN start_state_json='{}' THEN ? ELSE start_state_json END,
+                              max_cycles=CASE WHEN ? IS NOT NULL THEN ? ELSE max_cycles END,
                               updated_at_server_local=?
                               WHERE experiment_id=?""",
-                           (now,json.dumps(state,ensure_ascii=False),now,experiment_id))
+                           (now,json.dumps(state,ensure_ascii=False),
+                            _int(config.get("max_cycles")) if extension_cycle is not None else None,
+                            _int(config.get("max_cycles")) if extension_cycle is not None else None,
+                            now,experiment_id))
                 transition_state = dict(state)
                 if replaced_from:
                     transition_state["replaced_experiment_id"] = replaced_from
                     transition_state["replacement_reason"] = blocked
+                if extension_cycle is not None:
+                    transition_state["extended_from_cycle"] = extension_cycle
                 db.execute("""INSERT INTO experiment_transitions(
                               transition_uuid,session_id,experiment_id,server_time_local,status,reason,state_json)
                               VALUES(?,?,?,?,?,?,?)""",
                            (str(uuid.uuid4()),session_id,experiment_id,now,"running",
-                            "measurement_start" if not replaced_from else "measurement_start_new_id",
+                            ("measurement_extension" if extension_cycle is not None else
+                             "measurement_start" if not replaced_from else "measurement_start_new_id"),
                             json.dumps(transition_state,ensure_ascii=False,separators=(",",":"))))
                 db.commit()
             except Exception:
@@ -673,7 +785,7 @@ class ActivityLog:
             counts = {table:int(db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]) for table in tables}
             journal_mode = str(db.execute("PRAGMA journal_mode").fetchone()[0]).lower()
             synchronous = int(db.execute("PRAGMA synchronous").fetchone()[0])
-        current_local = datetime.now().astimezone()
+        current_local = datetime.now(APP_TIMEZONE)
         offset = current_local.strftime("%z")
         if len(offset) == 5:
             offset = f"{offset[:3]}:{offset[3:]}"
@@ -682,6 +794,6 @@ class ActivityLog:
                 "total_transitions":counts["experiment_transitions"],
                 "total_chat_messages":counts["chat_messages"],"total_analysis_results":counts["analysis_results"],
                 "database":str(self.db_path.relative_to(self.app_root)),"schema_version":SCHEMA_VERSION,
-                "local_timezone":current_local.tzname() or "","local_utc_offset":offset,
+                "local_timezone":APP_TIMEZONE_NAME,"local_utc_offset":offset,
                 "journal_mode":journal_mode,
                 "synchronous":{0:"OFF",1:"NORMAL",2:"FULL",3:"EXTRA"}.get(synchronous,str(synchronous))}

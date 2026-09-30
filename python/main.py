@@ -1,13 +1,14 @@
-# Open Standing Wave Lab v4.2 - temperature metadata + grounded experiment chatbot
+# Open Standing Wave Lab v4.11 - explicit timezone and Gemini 3.8 Flash
 import csv
 import json
 import os
 import math
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from arduino.app_utils import *
 from arduino.app_bricks.web_ui import WebUI
@@ -35,8 +36,9 @@ MAX_CYCLES_LIMIT = 1000
 DEFAULT_CONFIG = {
     "frequency_hz": 0.0,
     "distance_per_cycle_cm": 0.0,
-    "max_cycles": 110,
+    "max_cycles": 0,
     "first_measure_at_start": True,
+    "motor_forward_direction": 1,
     "tube_length_cm": 0.0,
     "tube_type": "open",
     "temperature_c": None,
@@ -57,7 +59,7 @@ import_meta = None
 # -----------------------------
 # LLM chatbot (separate layer)
 # -----------------------------
-CHAT_MODEL_ID = "google:gemini-3.5-flash-lite"
+CHAT_MODEL_ID = "google:gemini-3.8-flash"
 CHAT_HISTORY_TURNS = 6
 chat_lock = threading.Lock()
 chat_sessions_lock = threading.RLock()
@@ -65,10 +67,21 @@ chat_sessions = {}
 fit_cache_lock = threading.RLock()
 fit_cache = None
 
+APP_TIMEZONE_NAME = os.environ.get("STANDING_WAVE_TIMEZONE", "Asia/Seoul").strip() or "Asia/Seoul"
+try:
+    APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
+except ZoneInfoNotFoundError:
+    # UNO Q classroom deployments are in Korea. This fallback also works in a
+    # minimal container without the IANA timezone database.
+    if APP_TIMEZONE_NAME == "Asia/Seoul":
+        APP_TIMEZONE = timezone(timedelta(hours=9), name="KST")
+    else:
+        APP_TIMEZONE = datetime.now().astimezone().tzinfo
+
 
 def local_now(timespec="seconds"):
-    """Return the computer's current local time with its UTC offset."""
-    return datetime.now().astimezone().isoformat(timespec=timespec)
+    """Return the configured research timezone with its explicit UTC offset."""
+    return datetime.now(APP_TIMEZONE).isoformat(timespec=timespec)
 
 
 def clean_research_ids(research_session_id="", experiment_id=""):
@@ -110,7 +123,7 @@ def finish_research_experiment(research_session_id, experiment_id, status, reaso
 
 
 def start_research_experiment(research_session_id, experiment_id, state):
-    """Return the experiment_id actually recorded (a new one if the old id was closed)."""
+    """Return the experiment_id used, preserving a safely verified scan extension."""
     ids = clean_research_ids(research_session_id, experiment_id)
     if not ids[0]:
         return None
@@ -122,68 +135,104 @@ def start_research_experiment(research_session_id, experiment_id, state):
 
 
 CHAT_SYSTEM_PROMPT = """
-<시스템_지침>
-<역할>정상파를 모르는 학생의 실험을 보조하는 챗봇</역할>
-<장치의_개요>이 장치는 Arduino UNO Q, 스텝모터-실-도르래, 마이크 센서를 이용해 관 내부의 음향 정상파 압력 진폭 분포를 위치에 따라 자동 측정하여 실시간으로 그래프를 그려 주며, 학생의 질의에는 실험과 실시간 측정값을 근거로 답한다.</장치의_개요>
+<역할>
+너는 음향 정상파 자동 측정 실험을 돕는 고등학교 물리 실험 보조 교사이다.
+학생이 그래프와 실시간 측정값을 직접 관찰하여 의미를 이해하도록 돕는다.
+</역할>
+<학생_수준>
+학생은 정상파를 처음 배우는 고등학교 1학년이며, 마디·배·파장과 기호 λ도 아직 익숙하지 않다.
+전문 용어는 사용하기 전에 쉬운 말로 뜻을 설명하고, 한 답변에서 새로운 개념을 너무 많이 제시하지 않는다.
+학생의 질문이나 추측이 틀렸더라도 꾸짖지 말고, 측정값이나 물리적 근거를 이용해 정중하게 바로잡는다.
+</학생_수준>
+<장치>
+이 장치는 Arduino UNO Q, 스텝모터, 실과 도르래, 마이크 센서를 이용한다.
+마이크를 관을 따라 이동시키며 소리의 압력 진폭에 대응하는 Vpp를 측정하고, 위치에 따른 그래프를 실시간으로 그린다.
+</장치>
 <사실의_우선순위>
-- 매 요청의 '현재 실험 스냅샷'을 그 질문 시점의 최신 실험 사실로 취급하고 최근 대화보다 우선한다.
-- 최근 대화에는 과거 질문과 답변만 있으며 과거의 실험 스냅샷은 포함되지 않는다. 수치적 사실은 항상 현재 실험 스냅샷을 기준으로 한다.
-- 이 장치가 학습 효과나 학생의 성취도를 높였다고 실험 데이터 없이 단정하지 않는다.
-- 파장, 마디 간격, R², 음속 등 Python이 결정론적으로 계산한 값이 있으면 '계산된 결과'로서 정확히 인용한다. 다만 계산값의 물리적 신뢰성은 측정 구간과 모드에 따라 별도로 평가하며, 특히 기본진동의 단일 lobe처럼 파장 식별이 약한 경우 계산값을 곧바로 참값으로 단정하지 않는다. 계산값과 사용자의 추측이 충돌하면 사용자의 전제를 그대로 따르지 말고 근거를 들어 설명한다.
-- fitting 결과가 없거나 현재 데이터만으로 판단하기 어려운 것은 추측하지 말고 불확실하다고 명시한다.
-- 특정 회차, 위치, Vpp, 표준편차, clipping 여부를 언급할 때는 반드시 현재 스냅샷의 실제 행을 확인한다. 존재하지 않는 회차나 값을 만들어내지 않는다.
+1. 매 요청에 포함된 <현재_실험_스냅샷>을 그 질문 시점의 최신 실험 사실로 사용한다.
+2. 최근 대화는 질문의 의도와 연속성을 이해하는 데만 사용하고, 과거의 측정 사실로 사용하지 않는다.
+3. Python이 계산한 파장, 마디 간격, R², 음속 등의 값은 'Python으로 계산된 결과'라고 정확히 인용한다.
+4. 계산값의 물리적 신뢰성은 측정 범위, 공간 패턴, 모드와 경계조건을 함께 고려해 따로 평가한다.
+5. 스냅샷에 없는 값이나 측정 회차를 만들지 않는다. 판단할 근거가 부족하면 불확실하다고 말한다.
 </사실의_우선순위>
-<측정_데이터와_clipping_또는_외란>
-- clipping 여부의 유일한 기준은 현재 측정 데이터의 `clipped` 필드이다. Vpp가 크거나 약 3 V 부근이라는 이유만으로 clipping이라고 새로 판정하지 않는다.
-- `clipped=1`인 점만 clipping 의심점이라고 부른다. 이 점들은 현재 Python fitting에서 제외된다.
-- `clipped=0`인데 표준편차가 크거나 주변 추세에서 갑자기 벗어난 점은 주변 소음, 말소리, 기계적 외란 등으로 인한 이상점일 가능성을 언급할 수 있으나 원인을 단정하지 않는다.
-- 현재 fitting은 clipping flag가 있는 점만 제외하고 나머지 점을 동일 가중의 제곱오차(SSE)로 맞춘다. 표준편차 가중, robust loss, 자동 이상점 제거를 사용한다고 말하지 않는다. 일부 이상점이 있어도 전체 주기 구조가 충분하면 전역 fitting 결과가 안정적일 수 있다고 설명한다.
-- R²는 현재 모델이 관측된 진폭 형상을 얼마나 잘 설명하는지를 나타내는 지표이지, 파장 자체의 정확성이나 물리적 모수의 식별 가능성을 보증하는 값은 아니다.
-- R²를 '정확도'라고 부르지 않는다. 학생에게는 '계산한 곡선이 측정값의 모양을 얼마나 잘 따라가는지 나타내는 값'이라고 설명한다.
-</측정_데이터와_clipping_또는_외란>
-<정상파_해석>
-- 서로 이웃한 같은 종류의 지점 사이 거리, 즉 마디와 다음 마디 사이 또는 배와 다음 배 사이의 거리는 Δx = λ/2이다. 따라서 λ = 2Δx를 사용할 수 있다.
-- 이론값과 측정값이 두 배 정도 차이가 난다면 학생이 마디와 배를 하나씩 선택한 거리인 λ/4를 잰 것일 수 있으므로, 이를 λ/2로 잘못 계산하지 않았는지 되묻는다.
-- 진동수 f가 주어지면 v = fλ를 사용할 수 있다.
-- 이 장치의 Vpp는 마이크 출력의 압력 진폭에 대응한다. 개관의 열린 끝은 이상적으로 압력 마디에 가깝고, 막힌 끝은 압력 배에 가깝다.
-- 모드(기본진동, 2배진동, 3배진동 등)는 관 종류, 관 길이, 진동수, 실험실 온도, 실제 측정된 공간 패턴, fitting 결과를 함께 고려해 판단한다. 단순히 L/(λ/2)를 가장 가까운 정수로 반올림하는 것만으로 확정하지 않는다.
-- 개관의 기본진동처럼 관 내부 측정 구간에 하나의 압력 진폭 lobe만 주로 보이고 양 끝의 실제 압력 마디가 끝단보정 때문에 관 바깥쪽에 위치할 수 있는 경우, 자유로운 sinusoidal fitting만으로 λ를 정밀하게 식별하기 어렵다. 이 경우 높은 R²만으로 λ와 음속이 정확하다고 단정하지 말고, 관 길이·진동수·온도·끝단보정 가능성을 함께 검토한다.
-- 한쪽이 막힌 관의 기본진동도 관 내부에서 대략 1/4파장만 관측되므로, 경계조건과 끝단보정을 무시한 자유 fitting의 λ 추정에는 같은 종류의 식별 한계가 있을 수 있다.
-- 반대로 관 내부에 둘 이상의 명확한 압력 마디 또는 반복 lobe가 나타나는 고차 모드에서는 공간 주기에서 λ를 직접 제약할 수 있으므로 파장 추정이 일반적으로 더 강건하다.
-- 끝단보정의 크기를 정량적으로 계산하려면 관의 반지름/직경 등 추가 정보가 필요하다. 그 정보가 스냅샷에 없으면 보정량을 임의로 만들지 않는다.
-- 대칭적인 개관에서 양 끝의 끝단보정이 비슷하다면 끝단보정 자체만으로 중앙 압력 배가 한쪽으로 이동한다고 단정하지 않는다. 중앙 위치의 이동은 시작점/위치 보정, 비대칭 경계조건, 외란 등 다른 가능성과 함께 논의한다.
-- 공명 진동수가 아닌 진동수라고 해서 정상파가 생기지 않는다고 단정하지 않는다.
-- 관의 다른 공명 진동수에서는 마디와 배의 개수가 다른 정상파 모드가 나타날 수 있다.
-- 공명 진동수에서 많이 벗어나면 정상파가 약하거나 그래프의 반복 모양이 불분명할 수 있다고 설명한다.
-- fitting을 사용하면 파장을 반드시 더 정확하게 구할 수 있다고 말하지 않는다. 측정점 전체를 이용해 파장을 추정하는 방법이라고 설명한다.
-- Vpp의 pp는 peak-to-peak이며, 한 측정 구간에서 신호의 최댓값과 최솟값의 차이라고 설명한다.
-- Vpp가 크면 이 장치에서 측정한 마이크 신호의 변화 폭이 크다는 뜻이다. 이를 실제 음압이나 사람이 느끼는 소리의 크기와 완전히 같다고 단정하지 않는다.
-</정상파_해석>
+<답변_방법>
+질문이 단순하면 바로 짧게 답한다.
+측정 결과나 물리 개념을 설명할 때는 가능하면 다음 순서를 따른다.
+1. 결론을 쉬운 한 문장으로 말한다.
+2. 현재 그래프나 측정값에서 확인할 수 있는 근거를 제시한다.
+3. 그 근거의 물리적 의미를 쉬운 말로 설명한다.
+4. 필요할 때만 식을 사용하며, 기호의 뜻을 먼저 설명한다.
+5. 도움이 된다면 학생이 그래프에서 다음으로 확인할 점을 한 가지 제안한다.
+
+관찰된 사실, Python 계산 결과, 물리적 해석을 서로 구분하여 표현한다.
+학생이 이해하지 못할 가능성이 큰 전문적인 예외 사항을 한꺼번에 나열하지 않는다.
+</답변_방법>
+<측정값_해석>
+- 특정 회차, 위치, Vpp, 표준편차, clipping 여부를 언급할 때는 현재 스냅샷의 실제 행을 확인한다.
+- clipping 판단 기준은 측정 데이터의 `clipped` 필드이다.
+- `clipped=1`인 점만 clipping 의심점이라고 부르며, 이 점은 현재 Python fitting에서 제외된다.
+- `clipped=0`인 점이 주변 추세에서 크게 벗어나거나 표준편차가 크면 외란이나 소음의 가능성을 말할 수 있지만 원인을 단정하지 않는다.
+- 현재 fitting은 비클리핑 점을 동일한 가중치의 제곱오차(SSE)로 맞춘다.
+- 표준편차 가중, robust loss, 자동 이상점 제거를 사용한다고 설명하지 않는다.
+- 일부 이상점이 있어도 반복되는 전체 공간 패턴이 충분히 나타나면 전역 fitting이 비교적 안정적일 수 있다.
+- R²는 모델이 관측된 진폭 모양을 얼마나 잘 설명하는지를 나타낸다. 높은 R²만으로 파장이나 음속이 정확하다고 단정하지 않는다.
+</측정값_해석>
+<정상파_핵심>
+- 정상파는 서로 반대 방향으로 진행하는 파동이 겹쳐 만들어진다.
+- 공간에서 진폭이 작은 곳과 큰 곳의 위치가 거의 고정되어 보이는 것이 정상파이다.
+- '소리가 앞으로 진행하지 않는다'고 설명하지 않는다. 진행하는 파동들이 겹친 결과로 고정된 공간 패턴이 나타난다고 설명한다.
+- 이 장치의 Vpp는 마이크가 감지한 소리의 압력 진폭에 대응한다.
+- 압력 변화가 작은 곳을 압력 마디, 큰 곳을 압력 배라고 한다.
+- 인접한 같은 종류의 압력 마디 사이 거리는 파장의 절반이다.
+- 학생에게 λ를 처음 사용할 때는 '파장을 나타내는 그리스 문자 람다(λ)'라고 설명한다.
+- 기본 관계는 Δx = λ/2, 따라서 λ = 2Δx이다.
+- 진동수 f와 파장 λ가 주어지면 음속은 v = fλ로 계산할 수 있다.
+</정상파_핵심>
+<열린_끝과_막힌_끝>
+- 관의 열린 끝은 이상적으로 압력 변화가 작은 압력 마디에 가깝고, 막힌 끝은 압력 변화가 큰 압력 배에 가깝다.
+- 소리는 공기가 한 방향으로 이동하는 현상이 아니라, 공기 입자가 제자리 근처에서 진동하면서 압력 변화가 전달되는 현상이다.
+- 열린 끝에서는 관 안의 압력이 바깥 대기압과 가까워지기 쉬우므로 압력 변화가 작아진다.
+- 열린 끝에 도달한 소리의 일부는 바깥으로 방출되고, 경계조건 때문에 일부는 반사되어 관 안으로 돌아온다.
+- 열린 끝이 사람이나 벽처럼 소리를 가로막아 튕겨 보낸다고 설명하지 않는다.
+</열린_끝과_막힌_끝>
+<fitting과_모드_판단>
+- 모드는 관의 종류, 관 길이, 진동수, 온도, 실제 공간 패턴과 fitting 결과를 함께 고려해 판단한다.
+- 단순히 L/(λ/2)를 가장 가까운 정수로 반올림하여 모드를 확정하지 않는다.
+- 개관의 기본진동처럼 측정 구간에 하나의 큰 진폭 구간만 보이면, 자유로운 sinusoidal fitting만으로 파장을 정확히 정하기 어렵다.
+- 한쪽이 막힌 관의 기본진동도 관 내부에서 대략 1/4파장만 관측되므로 비슷한 식별 한계가 있다.
+- 이런 경우 높은 R²만으로 파장과 음속이 정확하다고 단정하지 않고, 관 길이·진동수·온도·경계조건·끝단보정 가능성을 함께 살핀다.
+- 관 안에서 둘 이상의 분명한 압력 마디나 반복되는 진폭 구간이 나타나는 고차 모드는 공간 주기를 직접 확인할 수 있어 파장 추정이 일반적으로 더 강건하다.
+- 끝단보정의 크기를 정량적으로 계산하려면 관의 반지름이나 직경이 필요하다. 해당 정보가 없으면 보정량을 만들지 않는다.
+- 대칭적인 개관의 중앙 압력 배가 한쪽으로 이동한 경우, 끝단보정만을 원인으로 단정하지 않는다. 위치 보정, 비대칭 경계조건, 소음과 외란 등의 가능성을 함께 검토한다.
+</fitting과_모드_판단>
 <온도와_음속>
-- 실험실 온도가 입력되어 있으면 20℃ 같은 임의의 상온값 대신 입력된 온도를 기준으로 이론 음속과 비교한다.
-- 필요하면 건조 공기의 근사식 v ≈ 331.3 + 0.606T (m/s, T는 ℃)를 사용할 수 있으나, 습도·기압 등을 보정하지 않은 근사임을 필요할 때 밝힌다.
-- 온도가 미입력이라면 임의의 온도를 가정하여 정확한 오차율을 제시하지 않는다.
+- 스냅샷에 실험실 온도와 그 온도로 계산한 이론 음속이 있으면 그 값을 사용한다.
+- 입력된 온도가 있는데 임의로 20 ℃를 가정하지 않는다.
+- 이론 음속을 직접 계산해야 한다면 건조 공기의 근사식 v ≈ 331.3 + 0.606T를 사용할 수 있다. 여기서 T는 섭씨온도이고 v의 단위는 m/s이다.
+- 이 식은 습도와 기압의 영향을 생략한 근사식임을 필요한 경우에만 밝힌다.
+- 온도가 입력되지 않았다면 임의의 온도를 가정하여 정확한 오차율을 제시하지 않는다.
 </온도와_음속>
-<실험_장치의_특성>
-- 추정 위치는 실-도르래 보정값으로 얻은 값이므로 절대 위치라고 단정하지 않는다.
-- 측정 데이터 초기화는 물리적 원점 복귀가 아니다. 새 실험 전에는 마이크를 START 표시선에 수동으로 맞추고 시작 위치를 확인한다.
-</실험_장치의_특성>
-<학습자_수준>
-- 대상은 정상파를 처음 접하는 고등학교 1학년 학생이다.
-- 학생은 파장 기호 λ, 마디, 배, 위상, fitting, R²의 의미를 아직 배우지 않았다.
-- 학생의 지적 능력을 낮게 평가하거나 어린아이를 대하듯 말하지 않는다.
-- 전문용어를 처음 사용할 때는 일상적인 표현을 먼저 제시하고, 그 뒤에 용어를 괄호로 알려 준다.
-  예: "그래프에서 소리가 가장 약한 지점(마디)"
-</학습자_수준>
-<학생에게_보이는_응답_방식>
-- 먼저 질문에 대한 답을 쉬운 말로 한두 문장 안에 제시한다.
-- 현재 그래프나 측정값에서 직접 확인할 수 있는 근거를 한두 개만 보여 준다.
-- 전문용어와 수식은 질문에 답하는 데 꼭 필요할 때만 사용한다.
-- 수식을 사용할 때는 기호의 뜻을 먼저 설명하거나 바로 뒤에 설명한다.
-- 한 답변에서 새로운 개념을 너무 많이 소개하지 않는다.
-- 가능하면 마지막에 학생이 그래프에서 확인할 한 가지를 알려 준다.
-</학생에게_보이는_응답_방식>
-</시스템_지침>
+<장치_사용상의_주의>
+- 표시되는 위치는 실과 도르래의 보정값으로 추정한 위치이므로 완전한 절대 위치라고 단정하지 않는다.
+- 측정 데이터 초기화는 마이크의 물리적 원점 복귀가 아니다.
+- 새 실험 전에는 마이크를 START 표시선에 수동으로 맞추고 시작 위치를 확인하도록 안내한다.
+</장치_사용상의_주의>
+<교육적_태도>
+- 먼저 학생이 그래프에서 실제로 무엇을 관찰했는지에 초점을 맞춘다.
+- 학생이 스스로 확인할 수 있는 질문은 짧은 관찰 질문이나 다음 행동으로 안내할 수 있다.
+- 학생의 질문에 답하지 않은 채 질문만 되돌려 보내지 않는다.
+- 실험 데이터만으로 이 장치의 학습 효과나 학생의 성취 향상을 단정하지 않는다.
+- 답변은 실험 중 바로 읽을 수 있을 정도로 간결하게 작성하되, 오해를 막는 데 필요한 근거는 생략하지 않는다.
+</교육적_태도>
+<응답_전_점검>
+답변을 보내기 전에 다음을 확인한다.
+- 현재 스냅샷에 없는 숫자나 회차를 만들지 않았는가?
+- 측정된 사실, 계산 결과와 추론을 구분했는가?
+- 열린 끝에서 소리가 막혀 튕긴다고 설명하지 않았는가?
+- 정상파에서 소리가 진행하지 않는다고 잘못 설명하지 않았는가?
+- 학생에게 낯선 용어와 기호를 먼저 쉽게 설명했는가?
+- 질문에 비해 지나치게 어렵거나 긴 설명을 덧붙이지 않았는가?
+</응답_전_점검>
 """.strip()
 
 
@@ -268,6 +317,10 @@ def load_persistent_state():
                 config["first_measure_at_start"] = False
             if config.get("data_mode") not in ("live", "imported"):
                 config["data_mode"] = "live"
+            try:
+                config["motor_forward_direction"] = -1 if int(config.get("motor_forward_direction", 1)) == -1 else 1
+            except (TypeError, ValueError):
+                config["motor_forward_direction"] = 1
     except Exception:
         pass
 
@@ -297,12 +350,18 @@ def normalize_temperature_c(value):
     return temperature
 
 
+def theoretical_sound_speed_m_s(temperature_c):
+    """Return the deterministic dry-air approximation used throughout the app."""
+    temperature = normalize_temperature_c(temperature_c)
+    return None if temperature is None else 331.3 + 0.606 * temperature
+
+
 def archive_current_measurements(reason):
     global measurements
     with data_lock:
         if not measurements:
             return None
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        stamp = datetime.now(APP_TIMEZONE).strftime("%Y%m%d_%H%M%S_%f")
         path = ARCHIVE_DIR / f"measurements_{stamp}.json"
         payload = {
             "archived_at": local_now(),
@@ -400,6 +459,7 @@ def save_measurements():
                     "distance_per_cycle_cm",
                     "first_measure_at_start",
                     "max_cycles",
+                    "motor_forward_direction",
                     "tube_length_cm",
                     "tube_type",
                     "temperature_c",
@@ -409,6 +469,7 @@ def save_measurements():
             frequency = float(config.get("frequency_hz", 0.0) or 0.0)
             first_at_start = configured_first_measure_at_start()
             max_cycles = configured_max_cycles()
+            motor_forward_direction = configured_motor_forward_direction()
             tube_length_cm = float(config.get("tube_length_cm", 0.0) or 0.0)
             tube_type = str(config.get("tube_type", "unknown") or "unknown")
             temperature_c = normalize_temperature_c(config.get("temperature_c"))
@@ -432,6 +493,7 @@ def save_measurements():
                         dx,
                         int(bool(first_at_start)),
                         max_cycles,
+                        motor_forward_direction,
                         tube_length_cm,
                         tube_type,
                         "" if temperature_c is None else temperature_c,
@@ -461,6 +523,9 @@ def read_mcu_status():
     max_result_capacity = int(bridge_call("get_max_result_capacity"))
     position_ready = int(bridge_call("get_position_ready"))
     jog_direction = int(bridge_call("get_jog_direction"))
+    motor_forward_clockwise = 1 if int(bridge_call("get_motor_forward_clockwise")) else 0
+    motor_forward_direction = 1 if motor_forward_clockwise else -1
+    motor_forward_step_sign = int(bridge_call("get_motor_forward_step_sign"))
     boot_id = int(bridge_call("get_boot_id"))
 
     return {
@@ -482,15 +547,18 @@ def read_mcu_status():
         "max_result_capacity": max_result_capacity,
         "position_ready": bool(position_ready),
         "jog_direction": jog_direction,
+        "motor_forward_direction": motor_forward_direction,
+        "motor_forward_clockwise": bool(motor_forward_clockwise),
+        "motor_forward_step_sign": motor_forward_step_sign,
         "boot_id": boot_id,
     }
 
 
 def configured_max_cycles():
     try:
-        value = int(config.get("max_cycles", 110) or 110)
+        value = int(config.get("max_cycles", 53) or 53)
     except (TypeError, ValueError):
-        value = 110
+        value = 53
     return max(1, min(MAX_CYCLES_LIMIT, value))
 
 
@@ -498,11 +566,40 @@ def configured_first_measure_at_start():
     return bool(config.get("first_measure_at_start", True))
 
 
+def configured_motor_forward_direction():
+    try:
+        return -1 if int(config.get("motor_forward_direction", 1)) == -1 else 1
+    except (TypeError, ValueError):
+        return 1
+
+
+def apply_motor_forward_direction_to_mcu(direction):
+    """Apply and verify the physical forward direction using an unambiguous 0/1 RPC."""
+    desired_direction = -1 if int(direction) == -1 else 1
+    desired_clockwise = 1 if desired_direction == 1 else 0
+    applied_clockwise = 1 if int(
+        bridge_call("set_motor_forward_clockwise", desired_clockwise)
+    ) else 0
+    confirmed_clockwise = 1 if int(
+        bridge_call("get_motor_forward_clockwise")
+    ) else 0
+    if applied_clockwise != desired_clockwise or confirmed_clockwise != desired_clockwise:
+        desired_label = "시계 방향" if desired_clockwise else "반시계 방향"
+        raise RuntimeError(
+            f"MCU가 모터 정방향({desired_label}) 설정을 적용하지 못했습니다. "
+            "모터가 정지했고 측정 데이터가 비어 있는지 확인하십시오."
+        )
+    step_sign = int(bridge_call("get_motor_forward_step_sign"))
+    if step_sign not in (-1, 1):
+        raise RuntimeError(f"MCU가 잘못된 모터 스텝 부호({step_sign})를 반환했습니다.")
+    return desired_direction
+
+
 def is_imported_mode():
     return str(config.get("data_mode", "live")) == "imported"
 
 
-def sync_configured_max_cycles_to_mcu(state):
+def sync_configured_scan_settings_to_mcu(state):
     """Apply persisted live-scan settings to the MCU while it is idle.
 
     Imported CSV data are intentionally analysis-only and must never rewrite the physical
@@ -514,10 +611,12 @@ def sync_configured_max_cycles_to_mcu(state):
     with max_cycles_lock:
         desired_max = configured_max_cycles()
         desired_first = 1 if configured_first_measure_at_start() else 0
-        current_max = int(state.get("max_cycles", 110) or 110)
+        desired_direction = configured_motor_forward_direction()
+        current_max = int(state.get("max_cycles", 53) or 53)
         current_first = 1 if bool(state.get("first_measure_at_start", True)) else 0
+        current_direction = -1 if int(state.get("motor_forward_direction", 1) or 1) == -1 else 1
 
-        if current_max == desired_max and current_first == desired_first:
+        if current_max == desired_max and current_first == desired_first and current_direction == desired_direction:
             return state
         if state.get("running") or int(state.get("phase", 0) or 0) != 0 or int(state.get("jog_direction", 0) or 0) != 0:
             return state
@@ -525,6 +624,11 @@ def sync_configured_max_cycles_to_mcu(state):
             return state
 
         updated = dict(state)
+        if current_direction != desired_direction and int(state.get("last_result_rev", 0) or 0) == 0:
+            updated["motor_forward_direction"] = apply_motor_forward_direction_to_mcu(desired_direction)
+            updated["motor_forward_clockwise"] = desired_direction == 1
+            updated["motor_forward_step_sign"] = int(bridge_call("get_motor_forward_step_sign"))
+            updated["position_ready"] = False
         if current_max != desired_max:
             updated["max_cycles"] = int(bridge_call("set_max_cycles", desired_max))
 
@@ -726,6 +830,20 @@ def fit_standing_wave():
 
     frequency = float(config.get("frequency_hz", 0.0) or 0.0)
     sound_speed = frequency * wavelength / 100.0 if frequency > 0 else None
+    temperature_c = normalize_temperature_c(config.get("temperature_c"))
+    theoretical_speed = theoretical_sound_speed_m_s(temperature_c)
+    theoretical_wavelength = (
+        theoretical_speed / frequency * 100.0
+        if theoretical_speed is not None and frequency > 0 else None
+    )
+    speed_absolute_error = (
+        abs(sound_speed - theoretical_speed)
+        if sound_speed is not None and theoretical_speed is not None else None
+    )
+    speed_relative_error = (
+        speed_absolute_error / theoretical_speed * 100.0
+        if speed_absolute_error is not None and theoretical_speed > 0 else None
+    )
 
     fit_points = [
         {"x_cm": x, "predicted_v": p}
@@ -742,6 +860,11 @@ def fit_standing_wave():
         "r2": r2,
         "frequency_hz": frequency if frequency > 0 else None,
         "sound_speed_m_s": sound_speed,
+        "temperature_c": temperature_c,
+        "theoretical_sound_speed_m_s": theoretical_speed,
+        "theoretical_wavelength_cm": theoretical_wavelength,
+        "sound_speed_absolute_error_m_s": speed_absolute_error,
+        "sound_speed_relative_error_percent": speed_relative_error,
         "used_points": len(data),
         "excluded_clipped_points": len(measurement_payload()) - len(data),
         "fit_points": fit_points,
@@ -764,6 +887,14 @@ def api_jog(direction: int = 0, detail: int = 1):
         if direction not in (-1, 0, 1):
             raise ValueError("JOG 방향은 -1, 0, 1 중 하나여야 합니다.")
 
+        # Before the first non-zero JOG command, reapply the saved direction and read
+        # it back from the MCU. Heartbeat calls skip this because JOG is already active.
+        if direction != 0 and detail:
+            state_before = sync_configured_scan_settings_to_mcu(read_mcu_status())
+            desired_direction = configured_motor_forward_direction()
+            if int(state_before.get("motor_forward_direction", 0)) != desired_direction:
+                raise RuntimeError("설정한 모터 정방향을 MCU에서 확인하지 못해 JOG를 시작하지 않았습니다.")
+
         applied = int(bridge_call("set_jog_direction", direction))
         if direction != 0 and applied != direction:
             state = read_mcu_status() if detail else None
@@ -777,7 +908,13 @@ def api_jog(direction: int = 0, detail: int = 1):
         if detail:
             time.sleep(0.01)
             state = read_mcu_status()
-            return {"ok": True, "state": state, "jog_direction": applied}
+            return {
+                "ok": True,
+                "state": state,
+                "jog_direction": applied,
+                "motor_forward_direction": int(state["motor_forward_direction"]),
+                "motor_forward_step_sign": int(state["motor_forward_step_sign"]),
+            }
         return {"ok": True, "jog_direction": applied}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -788,13 +925,15 @@ def api_start(research_session_id="", experiment_id=""):
         if is_imported_mode():
             state = read_mcu_status()
             return {"ok": False, "error": "CSV 불러오기 분석 모드입니다. 새 측정을 시작하려면 측정 데이터 초기화를 먼저 실행하십시오.", "state": state}
-        state = sync_configured_max_cycles_to_mcu(read_mcu_status())
+        state = sync_configured_scan_settings_to_mcu(read_mcu_status())
         if int(state.get("jog_direction", 0) or 0) != 0:
             return {"ok": False, "error": "장력 조절 모터를 먼저 정지한 뒤 측정을 시작하십시오.", "state": state}
         if int(state.get("max_cycles", 0)) != configured_max_cycles():
             return {"ok": False, "error": "설정한 마지막 회차를 MCU에 적용하지 못했습니다. 장치 상태를 확인하십시오.", "state": state}
         if bool(state.get("first_measure_at_start")) != configured_first_measure_at_start():
             return {"ok": False, "error": "설정한 첫 데이터 위치 방식을 MCU에 적용하지 못했습니다. 데이터가 비어 있는지 확인하십시오.", "state": state}
+        if int(state.get("motor_forward_direction", 1) or 1) != configured_motor_forward_direction():
+            return {"ok": False, "error": "설정한 모터 정방향을 MCU에 적용하지 못했습니다. 데이터가 비어 있는지 확인하십시오.", "state": state}
 
         used_experiment_id = start_research_experiment(research_session_id, experiment_id, state)
         if used_experiment_id:
@@ -924,6 +1063,14 @@ def api_reset(research_session_id="", experiment_id=""):
                     break
             with data_lock:
                 measurements = []
+                # A reset starts a new student activity. Keep categorical apparatus
+                # choices, but require students to type the five numerical settings
+                # shown as placeholders in the web UI.
+                config["frequency_hz"] = 0.0
+                config["distance_per_cycle_cm"] = 0.0
+                config["max_cycles"] = 0
+                config["tube_length_cm"] = 0.0
+                config["temperature_c"] = None
                 config["data_mode"] = "live"
             save_config()
             save_measurements()
@@ -941,7 +1088,7 @@ def api_reset(research_session_id="", experiment_id=""):
 
 def api_status():
     try:
-        state = sync_configured_max_cycles_to_mcu(read_mcu_status())
+        state = sync_configured_scan_settings_to_mcu(read_mcu_status())
         sync_new_results(state)
         return {"ok": True, "state": state, "data_mode": config.get("data_mode", "live")}
     except Exception as exc:
@@ -950,7 +1097,7 @@ def api_status():
 
 def api_data():
     try:
-        state = sync_configured_max_cycles_to_mcu(read_mcu_status())
+        state = sync_configured_scan_settings_to_mcu(read_mcu_status())
         sync_new_results(state)
         return {
             "ok": True,
@@ -962,7 +1109,7 @@ def api_data():
         return {"ok": False, "error": str(exc)}
 
 
-def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 110, first_measure_at_start: int = 1, tube_length_cm: float = 0.0, tube_type: str = "open", temperature_c="", research_session_id="", experiment_id=""):
+def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 53, first_measure_at_start: int = 1, motor_forward_direction: int = 1, motor_forward_clockwise="", tube_length_cm: float = 0.0, tube_type: str = "open", temperature_c="", research_session_id="", experiment_id=""):
     try:
         frequency_hz = max(0.0, float(frequency_hz))
         distance_per_cycle_cm = max(0.0, float(distance_per_cycle_cm))
@@ -973,6 +1120,17 @@ def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, ma
             raise ValueError("관 종류는 open, one_end_closed, unknown 중 하나여야 합니다.")
         max_cycles = int(max_cycles)
         first_measure_at_start = 1 if int(first_measure_at_start) else 0
+        clockwise_text = str(motor_forward_clockwise).strip()
+        if clockwise_text != "":
+            clockwise_flag = int(clockwise_text)
+            if clockwise_flag not in (0, 1):
+                raise ValueError("모터 시계 방향 설정값은 0 또는 1이어야 합니다.")
+            motor_forward_direction = 1 if clockwise_flag else -1
+        else:
+            # Backward compatibility for experiment bundles and older web pages.
+            motor_forward_direction = int(motor_forward_direction)
+            if motor_forward_direction not in (-1, 1):
+                raise ValueError("모터 정방향은 시계 방향 또는 반시계 방향 중 하나여야 합니다.")
         if max_cycles < 1 or max_cycles > MAX_CYCLES_LIMIT:
             raise ValueError(f"마지막 회차는 1~{MAX_CYCLES_LIMIT} 사이의 정수여야 합니다.")
 
@@ -984,6 +1142,7 @@ def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, ma
                 config["distance_per_cycle_cm"] = distance_per_cycle_cm
                 config["max_cycles"] = max_cycles
                 config["first_measure_at_start"] = bool(first_measure_at_start)
+                config["motor_forward_direction"] = motor_forward_direction
                 config["tube_length_cm"] = tube_length_cm
                 config["tube_type"] = tube_type
                 config["temperature_c"] = temperature_c
@@ -1001,9 +1160,15 @@ def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, ma
             if max_cycles < int(state.get("last_result_rev", 0)):
                 raise ValueError(f"이미 {state['last_result_rev']}회차까지 측정되어 마지막 회차를 그보다 작게 설정할 수 없습니다.")
             current_first = 1 if bool(state.get("first_measure_at_start", True)) else 0
+            current_direction = -1 if int(state.get("motor_forward_direction", 1) or 1) == -1 else 1
             if int(state.get("last_result_rev", 0)) > 0 and first_measure_at_start != current_first:
                 raise ValueError("측정 데이터가 있는 동안에는 첫 데이터 위치 방식을 변경할 수 없습니다. 새 실험에서 설정하십시오.")
+            if int(state.get("last_result_rev", 0)) > 0 and motor_forward_direction != current_direction:
+                raise ValueError("측정 데이터가 있는 동안에는 모터 정방향을 변경할 수 없습니다. 새 실험에서 설정하십시오.")
 
+            applied_direction = apply_motor_forward_direction_to_mcu(motor_forward_direction)
+            if applied_direction != motor_forward_direction:
+                raise RuntimeError("MCU가 모터 정방향 설정을 받아들이지 않았습니다.")
             applied = int(bridge_call("set_max_cycles", max_cycles))
             if applied != max_cycles:
                 raise RuntimeError(f"MCU가 마지막 회차 {max_cycles} 설정을 받아들이지 않았습니다. 현재 값: {applied}")
@@ -1016,6 +1181,7 @@ def api_config(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, ma
                 config["distance_per_cycle_cm"] = distance_per_cycle_cm
                 config["max_cycles"] = max_cycles
                 config["first_measure_at_start"] = bool(first_measure_at_start)
+                config["motor_forward_direction"] = motor_forward_direction
                 config["tube_length_cm"] = tube_length_cm
                 config["tube_type"] = tube_type
                 config["temperature_c"] = temperature_c
@@ -1051,7 +1217,7 @@ def _clean_import_row(row):
     }
 
 
-def api_import_begin(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 110, first_measure_at_start: int = 1, tube_length_cm: float = 0.0, tube_type: str = "unknown", temperature_c="", total_rows: int = 0, research_session_id="", experiment_id=""):
+def api_import_begin(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0.0, max_cycles: int = 110, first_measure_at_start: int = 1, motor_forward_direction: int = 1, tube_length_cm: float = 0.0, tube_type: str = "unknown", temperature_c="", total_rows: int = 0, research_session_id="", experiment_id=""):
     global import_buffer, import_meta
     try:
         state = read_mcu_status()
@@ -1072,6 +1238,7 @@ def api_import_begin(frequency_hz: float = 0.0, distance_per_cycle_cm: float = 0
                 "distance_per_cycle_cm": max(0.0, float(distance_per_cycle_cm)),
                 "max_cycles": max_cycles,
                 "first_measure_at_start": bool(int(first_measure_at_start)),
+                "motor_forward_direction": -1 if int(motor_forward_direction) == -1 else 1,
                 "tube_length_cm": max(0.0, float(tube_length_cm)),
                 "tube_type": tube_type,
                 "temperature_c": normalize_temperature_c(temperature_c),
@@ -1122,6 +1289,7 @@ def api_import_commit():
             config["distance_per_cycle_cm"] = meta["distance_per_cycle_cm"]
             config["max_cycles"] = max(int(meta["max_cycles"]), max((int(r["rev"]) for r in rows), default=1))
             config["first_measure_at_start"] = bool(meta["first_measure_at_start"])
+            config["motor_forward_direction"] = -1 if int(meta.get("motor_forward_direction", 1)) == -1 else 1
             config["tube_length_cm"] = float(meta.get("tube_length_cm", 0.0) or 0.0)
             config["tube_type"] = str(meta.get("tube_type", "unknown") or "unknown")
             config["temperature_c"] = normalize_temperature_c(meta.get("temperature_c"))
@@ -1158,14 +1326,14 @@ def api_import_cancel():
     return {"ok": True}
 
 
-def api_fit(research_session_id="", experiment_id=""):
+def api_fit(research_session_id="", experiment_id="", record: int = 1):
     global fit_cache
     try:
         result = fit_standing_wave()
         with fit_cache_lock:
             fit_cache = dict(result) if isinstance(result, dict) else None
         ids = clean_research_ids(research_session_id, experiment_id)
-        if ids[0]:
+        if ids[0] and bool(int(record)):
             try:
                 activity_log.record_analysis(ids[0], ids[1], "curve_fit", result, dict(config))
             except Exception as exc:
@@ -1174,7 +1342,7 @@ def api_fit(research_session_id="", experiment_id=""):
     except Exception as exc:
         result = {"ok": False, "error": str(exc)}
         ids = clean_research_ids(research_session_id, experiment_id)
-        if ids[0]:
+        if ids[0] and bool(int(record)):
             try:
                 activity_log.record_analysis(ids[0], ids[1], "curve_fit", result, dict(config))
             except Exception as log_exc:
@@ -1242,11 +1410,20 @@ def build_experiment_context():
     rows, data_lines = compact_measurement_context()
     frequency = float(config.get("frequency_hz", 0.0) or 0.0)
     dx = float(config.get("distance_per_cycle_cm", 0.0) or 0.0)
-    max_cycles = configured_max_cycles()
+    try:
+        entered_max_cycles = int(config.get("max_cycles", 0) or 0)
+    except (TypeError, ValueError):
+        entered_max_cycles = 0
     first_at_start = configured_first_measure_at_start()
+    motor_forward_direction = configured_motor_forward_direction()
     tube_length_cm = float(config.get("tube_length_cm", 0.0) or 0.0)
     tube_type = str(config.get("tube_type", "unknown") or "unknown")
     temperature_c = normalize_temperature_c(config.get("temperature_c"))
+    theoretical_speed = theoretical_sound_speed_m_s(temperature_c)
+    theoretical_wavelength = (
+        theoretical_speed / frequency * 100.0
+        if theoretical_speed is not None and frequency > 0 else None
+    )
     tube_type_ko = {"open": "개관(양쪽 열림)", "one_end_closed": "한쪽이 막힌 관", "unknown": "미지정"}.get(tube_type, "미지정")
     clipped_count = sum(1 for row in rows if row.get("clipped"))
     positions = [float(row["x_cm"]) for row in rows if row.get("x_cm") is not None]
@@ -1263,6 +1440,13 @@ def build_experiment_context():
          if temperature_c is not None else '    <실험실_온도 상태="미입력" />'),
         "    <이동_기구>스텝모터와 실/도르래로 마이크를 한 방향으로 이동하며 새 실험 전에는 수동으로 복귀</이동_기구>",
         "  </장치_정보>",
+        "  <이론_계산 계산_주체=\"Python\" 식=\"v = 331.3 + 0.606T\">",
+        (f'    <이론_음속 단위="m/s">{theoretical_speed:.3f}</이론_음속>'
+         if theoretical_speed is not None else '    <이론_음속 상태="온도_미입력으로_계산_불가" />'),
+        (f'    <이론_파장 단위="cm">{theoretical_wavelength:.4f}</이론_파장>'
+         if theoretical_wavelength is not None else '    <이론_파장 상태="온도_또는_진동수_미입력으로_계산_불가" />'),
+        "    <주의>건조 공기 근사이며 습도와 기압은 보정하지 않음</주의>",
+        "  </이론_계산>",
         "  <측정_설정>",
         "    <빠른_스캔>모터 20 RPM, 이동 후 안정화 0.5 s, 200 ms Vpp window 10회, 최대값과 최소값을 1개씩 제외한 8개의 평균과 표준편차</빠른_스캔>",
         (f'    <설정_주파수 단위="Hz">{frequency:.3f}</설정_주파수>'
@@ -1271,8 +1455,10 @@ def build_experiment_context():
          if dx > 0 else '    <회차당_추정_이동거리 상태="미보정">그래프 x축은 회차</회차당_추정_이동거리>'),
         (f'    <측정_위치_범위 단위="cm"><최솟값>{min(positions):.3f}</최솟값><최댓값>{max(positions):.3f}</최댓값></측정_위치_범위>'
          if positions else '    <측정_위치_범위 상태="측정값_없음" />'),
-        f"    <마지막_회차>{max_cycles}</마지막_회차>",
+        (f"    <마지막_회차>{entered_max_cycles}</마지막_회차>"
+         if entered_max_cycles > 0 else '    <마지막_회차 상태="미입력" />'),
         f"    <첫_데이터_위치>{'확인된 시작 위치(1회차 = 0 cm)' if first_at_start else '1회 이동 후'}</첫_데이터_위치>",
+        f"    <모터_정방향 관찰_기준=\"출력축_도르래를_정면에서_봄\">{'시계 방향' if motor_forward_direction == 1 else '반시계 방향'}</모터_정방향>",
         f"    <데이터_출처>{'불러온 실험 데이터' if is_imported_mode() else '현재 MCU 실시간 측정 데이터'}</데이터_출처>",
         f"    <저장된_측정점_수>{len(rows)}</저장된_측정점_수>",
         f"    <clipping_의심점_수>{clipped_count}</clipping_의심점_수>",
@@ -1300,6 +1486,12 @@ def build_experiment_context():
         )
         if fit.get("sound_speed_m_s") is not None:
             context_lines.append(f'    <계산된_음속 단위="m/s">{float(fit["sound_speed_m_s"]):.3f}</계산된_음속>')
+        if fit.get("theoretical_sound_speed_m_s") is not None:
+            context_lines.append(f'    <이론_음속 단위="m/s">{float(fit["theoretical_sound_speed_m_s"]):.3f}</이론_음속>')
+        if fit.get("sound_speed_absolute_error_m_s") is not None:
+            context_lines.append(f'    <음속_절대_오차 단위="m/s">{float(fit["sound_speed_absolute_error_m_s"]):.3f}</음속_절대_오차>')
+        if fit.get("sound_speed_relative_error_percent") is not None:
+            context_lines.append(f'    <음속_상대_오차율 단위="%" 기준="절댓값">{float(fit["sound_speed_relative_error_percent"]):.3f}</음속_상대_오차율>')
         context_lines.extend(
             [
                 f"    <모델>{_xml_text(fit.get('model', ''))}</모델>",
@@ -1490,7 +1682,7 @@ def background_sync_loop():
     while True:
         try:
             if not is_imported_mode():
-                state = sync_configured_max_cycles_to_mcu(read_mcu_status())
+                state = sync_configured_scan_settings_to_mcu(read_mcu_status())
                 sync_new_results(state)
         except Exception:
             pass

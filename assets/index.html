@@ -114,13 +114,14 @@
   <div class="card">
     <h2>1. 실험 설정</h2>
     <div class="controls">
-      <div class="field"><label for="frequency">공명 진동수 f</label><input id="frequency" type="number" min="0" step="0.1" placeholder="예: 980"><span>Hz</span></div>
-      <div class="field"><label for="tubeLength">관 길이</label><input id="tubeLength" type="number" min="0" step="0.1" placeholder="예: 90"><span>cm</span></div>
+      <div class="field"><label for="frequency">공명 진동수 f</label><input id="frequency" type="number" min="0" step="0.1" placeholder="978" required><span>Hz</span></div>
+      <div class="field"><label for="tubeLength">관 길이</label><input id="tubeLength" type="number" min="0" step="0.1" placeholder="50" required><span>cm</span></div>
       <div class="field"><label for="tubeType">관 종류</label><select id="tubeType"><option value="open">개관 (양쪽 열림)</option><option value="one_end_closed">한쪽이 막힌 관</option><option value="unknown">미지정</option></select></div>
-      <div class="field"><label for="temperature">실험실 온도</label><input id="temperature" type="number" min="-50" max="80" step="0.1" placeholder="예: 27"><span>℃</span></div>
-      <div class="field"><label for="distance">1회 이동당 추정 거리</label><input id="distance" type="number" min="0" step="0.001" placeholder="자로 보정"><span>cm</span></div>
-      <div class="field"><label for="maxCycles">마지막 회차</label><input id="maxCycles" type="number" min="1" max="1000" step="1" value="110"><span>회</span></div>
+      <div class="field"><label for="temperature">실험실 온도</label><input id="temperature" type="number" min="-50" max="80" step="0.1" placeholder="26" required><span>℃</span></div>
+      <div class="field"><label for="distance">1회 이동당 추정 거리</label><input id="distance" type="number" min="0" step="0.001" placeholder="0.96" required><span>cm</span></div>
+      <div class="field"><label for="maxCycles">마지막 회차</label><input id="maxCycles" type="number" min="1" max="1000" step="1" placeholder="53" required><span>회</span></div>
       <div class="field"><label for="firstMeasureAtStart">첫 데이터 위치</label><select id="firstMeasureAtStart"><option value="1">시작 위치 (0 cm)</option><option value="0">1회 이동 후</option></select></div>
+      <div class="field"><label for="motorForwardDirection">스텝모터 정방향</label><select id="motorForwardDirection"><option value="1">시계 방향</option><option value="-1">반시계 방향</option></select></div>
       <button onclick="saveConfig()">설정 저장</button>
       <button id="downloadExperimentBundleButton" onclick="downloadExperimentBundle()">실험 세트 저장 (ZIP)</button>
       <button id="importBundleButton" onclick="document.getElementById('bundleFileInput').click()">실험 세트 불러오기 (ZIP)</button>
@@ -134,6 +135,7 @@
       <span id="jogState" class="jog-status">정지</span>
     </div>
     <div class="warning"><b>장력 조절:</b> 새 실험에서 데이터가 비어 있을 때만 사용할 수 있습니다. 정방향은 실제 측정 이동 방향이며, 버튼을 누르면 저속으로 계속 회전하고 <b>정지</b>를 누르면 즉시 멈추고 코일을 해제합니다. JOG로 위치를 움직인 뒤에는 반드시 마이크의 시작 위치를 맞추고 <b>시작 위치 확인</b>을 다시 누르십시오.</div>
+    <div class="warning"><b>회전 방향 기준:</b> 스텝모터의 출력축(도르래)을 정면에서 보았을 때의 방향입니다. 방향을 바꾸면 시작 위치 확인이 해제되므로 마이크를 START 표시선에 맞추고 다시 확인하십시오.</div>
     <div class="warning"><b>첫 데이터 위치:</b> 기본값인 <b>시작 위치 (0 cm)</b>를 선택하면 1회차를 현재 시작 위치에서 먼저 측정하고, 2회차부터 한 번씩 이동합니다. <b>1회 이동 후</b>를 선택하면 기존 방식처럼 이동한 뒤 1회차를 측정합니다.</div>
     <div class="warning">실-도르래 구동에서는 미끄럼과 실의 신장 때문에 위치가 절대좌표가 아닐 수 있습니다. 보정값을 입력하면 모든 x축을 <b>추정 위치(cm)</b>로 표시하며, 보정값이 0이면 회차로 표시합니다.</div>
     <div class="warning">배선: D8~D11 → ULN2003. GND를 UNO Q와 공통으로 연결합니다. A0에는 0~3.3 V 범위만 입력하십시오. 현재 빠른 측정 설정은 모터 20 RPM, 안정화 0.5초, 200 ms × 10회 측정입니다.</div>
@@ -153,6 +155,7 @@
       <div class="status-box"><strong>회차-위치 기준</strong><span id="positionState">-</span></div>
       <div class="status-box"><strong>완료</strong><span id="cycleState">0 / -</span></div>
       <div class="status-box"><strong>현재 단계</strong><span id="phaseState">-</span></div>
+      <div class="status-box"><strong>MCU 모터 정방향</strong><span id="motorDirectionState">확인 중</span></div>
     </div>
     <div class="warning"><b>새 실험 준비:</b> 필요한 결과를 먼저 저장한 뒤 측정 데이터를 초기화하십시오. 필요하면 위의 장력 조절 JOG로 실을 팽팽하게 만든 뒤 마이크를 시작 표시선에 맞추고 <b>시작 위치 확인</b>을 누르십시오. 이 버튼은 모터를 움직이지 않습니다.</div>
     <div class="warning"><b>중간 정지 주의:</b> 한 회차의 이동/안정화/측정 도중 정지하면 마이크가 이미 일부 이동했을 수 있으므로 회차-위치 대응을 자동으로 무효 처리합니다. 그 경우 이어서 측정하지 말고 새 실험 준비 절차를 거치십시오.</div>
@@ -249,6 +252,7 @@ const temperatureInput = document.getElementById('temperature');
 const distanceInput = document.getElementById('distance');
 const maxCyclesInput = document.getElementById('maxCycles');
 const firstMeasureAtStartInput = document.getElementById('firstMeasureAtStart');
+const motorForwardDirectionInput = document.getElementById('motorForwardDirection');
 const bundleFileInput = document.getElementById('bundleFileInput');
 const importBundleButton = document.getElementById('importBundleButton');
 const message = document.getElementById('message');
@@ -256,6 +260,7 @@ const settingsMessage = document.getElementById('settingsMessage');
 const stateEl = document.getElementById('state');
 const positionStateEl = document.getElementById('positionState');
 const cycleStateEl = document.getElementById('cycleState');
+const motorDirectionStateEl = document.getElementById('motorDirectionState');
 const phaseStateEl = document.getElementById('phaseState');
 const dataBody = document.getElementById('dataBody');
 const axisNote = document.getElementById('axisNote');
@@ -279,7 +284,7 @@ const chatSendButton = document.getElementById('chatSendButton');
 const chatModelText = document.getElementById('chatModelText');
 
 let measurements = [];
-let config = {frequency_hz: 0, tube_length_cm: 0, tube_type: 'open', temperature_c: null, distance_per_cycle_cm: 0, max_cycles: 110, first_measure_at_start: true, data_mode: 'live'};
+let config = {frequency_hz: 0, tube_length_cm: 0, tube_type: 'open', temperature_c: null, distance_per_cycle_cm: 0, max_cycles: 0, first_measure_at_start: true, motor_forward_direction: 1, data_mode: 'live'};
 let selectedNodes = [];
 let fitData = null;
 let latestState = null;
@@ -293,9 +298,9 @@ let requestedJogDirection = 0;
 let jogHeartbeatInFlight = false;
 let chatBusy = false;
 let bundleImportInFlight = false;
-let lastChatModel = 'google:gemini-3.5-flash-lite';
-const ACTIVITY_APP_VERSION = 'standing-wave-lab-research-v3.0';
-const ACTIVITY_QUEUE_KEY = 'standingWavePendingActivityV1';
+let lastChatModel = 'google:gemini-3.8-flash';
+const ACTIVITY_APP_VERSION = 'standing-wave-lab-research-v3.5';
+const LEGACY_ACTIVITY_QUEUE_KEY = 'standingWavePendingActivityV1';
 const RESEARCH_SESSION_KEY = 'standingWaveResearchSessionV2';
 const RESEARCH_EXPERIMENT_KEY = 'standingWaveResearchExperimentV2';
 function newResearchUuid(prefix) {
@@ -319,12 +324,12 @@ if (!researchExperimentId) {
   sessionStorage.setItem(RESEARCH_EXPERIMENT_KEY, researchExperimentId);
 }
 const ACTIVITY_SESSION_ID = researchSessionId;
+const ACTIVITY_QUEUE_KEY = `standingWavePendingActivityV2:${ACTIVITY_SESSION_ID}`;
 const ACTIVITY_STARTED_AT = performance.now();
 let activityQueue = [];
 let activityFlushTimer = null;
 let activityFlushInFlight = false;
 let activityRetryMs = 1000;
-let activityInputTimers = new WeakMap();
 const CHAT_MESSAGES_KEY = 'standingWaveChatMessagesV1';
 let chatSessionId = researchSessionId;
 
@@ -380,14 +385,22 @@ function activityElementValue(element) {
 function savePendingActivityQueue() {
   try {
     const keep = activityQueue.slice(-500);
-    localStorage.setItem(ACTIVITY_QUEUE_KEY, JSON.stringify(keep));
+    if (keep.length) localStorage.setItem(ACTIVITY_QUEUE_KEY, JSON.stringify(keep));
+    else localStorage.removeItem(ACTIVITY_QUEUE_KEY);
   } catch (_) {}
 }
 
 function restorePendingActivityQueue() {
   try {
+    // v1 used one queue shared by every browser session. Ignore it so a delayed
+    // page-hide event from an earlier tab cannot create an orphan DB session.
+    localStorage.removeItem(LEGACY_ACTIVITY_QUEUE_KEY);
     const pending = JSON.parse(localStorage.getItem(ACTIVITY_QUEUE_KEY) || '[]');
-    if (Array.isArray(pending)) activityQueue = pending.slice(-500);
+    if (Array.isArray(pending)) {
+      activityQueue = pending
+        .filter(item => item && item.session_id === ACTIVITY_SESSION_ID)
+        .slice(-500);
+    }
   } catch (_) { activityQueue = []; }
 }
 
@@ -407,10 +420,10 @@ function logActivity(eventType, options={}) {
   activityQueue.push(event);
   if (activityQueue.length > 500) activityQueue.splice(0, activityQueue.length - 500);
   savePendingActivityQueue();
-  scheduleActivityFlush(options.immediate ? 0 : 300);
+  scheduleActivityFlush(options.immediate ? 0 : 1200);
 }
 
-function scheduleActivityFlush(delay=300) {
+function scheduleActivityFlush(delay=1200) {
   if (activityFlushTimer) clearTimeout(activityFlushTimer);
   activityFlushTimer = setTimeout(() => {
     activityFlushTimer = null;
@@ -423,7 +436,7 @@ function nextActivityBatch() {
   const batch = [];
   let size = 0;
   for (const item of activityQueue) {
-    if (batch.length >= 4) break;
+    if (batch.length >= 10) break;
     const length = encodeURIComponent(JSON.stringify(item)).length;
     if (batch.length && size + length > ACTIVITY_MAX_BATCH_URL_CHARS) break;
     batch.push(item);
@@ -485,28 +498,13 @@ document.addEventListener('click', event => {
   const target = event.target instanceof Element ? event.target.closest('button') : null;
   if (!target) return;
   const info = activityTargetInfo(target);
-  logActivity('button_click', {...info, value: target.dataset.chatQuestion || ''});
-}, true);
-
-document.addEventListener('input', event => {
-  const target = event.target;
-  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) return;
-  const oldTimer = activityInputTimers.get(target);
-  if (oldTimer) clearTimeout(oldTimer);
-  activityInputTimers.set(target, setTimeout(() => {
-    const info = activityTargetInfo(target);
-    const value = activityElementValue(target);
-    logActivity('input', {...info, value: typeof value === 'string' ? value : JSON.stringify(value)});
-    activityInputTimers.delete(target);
-  }, 450));
+  logActivity('button_click', info);
 }, true);
 
 document.addEventListener('change', event => {
   const target = event.target;
-  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) return;
-  const oldTimer = activityInputTimers.get(target);
-  if (oldTimer) clearTimeout(oldTimer);
-  activityInputTimers.delete(target);
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+  if (target === chatInput) return;
   const info = activityTargetInfo(target);
   const value = activityElementValue(target);
   logActivity('change', {...info, value: typeof value === 'string' ? value : JSON.stringify(value)});
@@ -522,23 +520,45 @@ logActivity('page_open', {
   detail:{app_version:ACTIVITY_APP_VERSION, experiment_id:researchExperimentId, language:navigator.language || '', user_agent:navigator.userAgent || '', screen:{width:screen.width,height:screen.height}, viewport:{width:innerWidth,height:innerHeight}}
 });
 
-[frequencyInput, tubeLengthInput, tubeTypeInput, temperatureInput, distanceInput, maxCyclesInput, firstMeasureAtStartInput].forEach(input => {
+[frequencyInput, tubeLengthInput, tubeTypeInput, temperatureInput, distanceInput, maxCyclesInput, firstMeasureAtStartInput, motorForwardDirectionInput].forEach(input => {
   input.addEventListener('input', () => {
     configInputsDirty = true;
   });
 });
 
 function syncConfigInputsFromServer(force=false) {
-  const editing = document.activeElement === frequencyInput || document.activeElement === tubeLengthInput || document.activeElement === tubeTypeInput || document.activeElement === temperatureInput || document.activeElement === distanceInput || document.activeElement === maxCyclesInput || document.activeElement === firstMeasureAtStartInput;
+  const editing = document.activeElement === frequencyInput || document.activeElement === tubeLengthInput || document.activeElement === tubeTypeInput || document.activeElement === temperatureInput || document.activeElement === distanceInput || document.activeElement === maxCyclesInput || document.activeElement === firstMeasureAtStartInput || document.activeElement === motorForwardDirectionInput;
   if (!force && (editing || configInputsDirty)) return;
   frequencyInput.value = Number(config.frequency_hz) > 0 ? config.frequency_hz : '';
   tubeLengthInput.value = Number(config.tube_length_cm) > 0 ? config.tube_length_cm : '';
   tubeTypeInput.value = ['open','one_end_closed','unknown'].includes(config.tube_type) ? config.tube_type : 'unknown';
   temperatureInput.value = (config.temperature_c !== null && config.temperature_c !== undefined && config.temperature_c !== '' && Number.isFinite(Number(config.temperature_c))) ? config.temperature_c : '';
   distanceInput.value = Number(config.distance_per_cycle_cm) > 0 ? config.distance_per_cycle_cm : '';
-  maxCyclesInput.value = Number(config.max_cycles) > 0 ? Math.round(Number(config.max_cycles)) : 110;
+  maxCyclesInput.value = Number(config.max_cycles) > 0 ? Math.round(Number(config.max_cycles)) : '';
   firstMeasureAtStartInput.value = config.first_measure_at_start === false ? '0' : '1';
+  motorForwardDirectionInput.value = Number(config.motor_forward_direction) === -1 ? '-1' : '1';
   configInputsInitialized = true;
+}
+
+function clearClassroomNumericInputs() {
+  frequencyInput.value = '';
+  tubeLengthInput.value = '';
+  temperatureInput.value = '';
+  distanceInput.value = '';
+  maxCyclesInput.value = '';
+  tubeTypeInput.value = ['open','one_end_closed','unknown'].includes(config.tube_type) ? config.tube_type : 'open';
+  firstMeasureAtStartInput.value = config.first_measure_at_start === false ? '0' : '1';
+  motorForwardDirectionInput.value = Number(config.motor_forward_direction) === -1 ? '-1' : '1';
+  configInputsInitialized = true;
+  configInputsDirty = false;
+}
+
+function classroomNumericSettingsAreMissing() {
+  return !(Number(config.frequency_hz) > 0)
+    || !(Number(config.tube_length_cm) > 0)
+    || config.temperature_c === null || config.temperature_c === undefined || config.temperature_c === ''
+    || !(Number(config.distance_per_cycle_cm) > 0)
+    || !(Number(config.max_cycles) > 0);
 }
 
 function setMessage(text, isError=false) {
@@ -575,6 +595,8 @@ function updateStatus(s) {
     positionStateEl.className = 'good';
     cycleStateEl.textContent = `${measurements.length}개`;
     phaseStateEl.textContent = '오프라인 분석';
+    motorDirectionStateEl.textContent = `${motorDirectionLabel(config.motor_forward_direction)} (저장 자료)`;
+    motorDirectionStateEl.className = '';
     startButton.disabled = true;
     confirmButton.disabled = true;
     jogForwardButton.disabled = true;
@@ -604,6 +626,13 @@ function updateStatus(s) {
   }
   cycleStateEl.textContent = `${s.last_result_rev} / ${s.max_cycles}`;
   phaseStateEl.textContent = phaseText(s);
+  const appliedMotorDirection = Number(s.motor_forward_direction) === -1 ? -1 : 1;
+  const configuredMotorDirection = Number(config.motor_forward_direction) === -1 ? -1 : 1;
+  motorDirectionStateEl.textContent = appliedMotorDirection === configuredMotorDirection
+    ? `${motorDirectionLabel(appliedMotorDirection)} (적용 확인)`
+    : `설정 불일치: ${motorDirectionLabel(appliedMotorDirection)}`;
+  motorDirectionStateEl.className = appliedMotorDirection === configuredMotorDirection ? 'good' : 'bad';
+  motorDirectionStateEl.title = Number(s.motor_forward_step_sign) === -1 ? 'MCU Stepper.step(-1)' : 'MCU Stepper.step(+1)';
   startButton.disabled = busy || manualBusy || !s.position_ready || s.last_result_rev >= s.max_cycles;
   confirmButton.disabled = busy || manualBusy || s.last_result_rev > 0 || !!s.position_ready;
   resetButton.disabled = busy || manualBusy;
@@ -632,7 +661,9 @@ async function loadData({syncInputs=false} = {}) {
     if (!d.ok) throw new Error(d.error || 'data error');
     measurements = normalizeMeasurements(d.measurements);
     config = d.config || config;
-    if (syncInputs || !configInputsInitialized) {
+    if (!configInputsInitialized && config.data_mode !== 'imported' && measurements.length === 0 && classroomNumericSettingsAreMissing()) {
+      clearClassroomNumericInputs();
+    } else if (syncInputs || !configInputsInitialized) {
       syncConfigInputsFromServer(true);
     }
     updateStatus(d.state);
@@ -673,13 +704,6 @@ async function pollStatus() {
       logActivity('research_experiment_rotated', {value:researchExperimentId, detail:{reason:'mcu_reboot', previous_boot_id:reboot_previous_boot, boot_id:newBoot}});
     }
     if (!hadState || newSeq !== oldSeq || newRev !== oldRev || newBoot !== oldBoot) {
-      if (hadState && newRev > oldRev) {
-        logActivity('measurement_completed', {
-          target_id:'cycleState',
-          value:String(newRev),
-          detail:{previous_rev:oldRev, data_seq:newSeq, boot_id:newBoot}
-        });
-      }
       await loadData();
     }
   } catch (e) {
@@ -704,7 +728,8 @@ async function sendJogCommand(direction, announce=false) {
     if (!d.ok) throw new Error(d.error || 'jog error');
     if (d.state) updateStatus(d.state);
     if (announce) {
-      if (direction === 1) setSettingsMessage('장력 조절 모터를 정방향(측정 방향)으로 저속 회전합니다. 원하는 장력이 되면 정지를 누르십시오.');
+      const appliedDirection = Number(d.state?.motor_forward_direction ?? d.motor_forward_direction) === -1 ? -1 : 1;
+      if (direction === 1) setSettingsMessage(`장력 조절 모터를 설정한 정방향(${motorDirectionLabel(appliedDirection)})으로 저속 회전합니다. 원하는 장력이 되면 정지를 누르십시오.`);
       else if (direction === -1) setSettingsMessage('장력 조절 모터를 역방향으로 저속 회전합니다. 원하는 위치가 되면 정지를 누르십시오.');
       else setSettingsMessage('장력 조절 모터를 정지하고 코일을 해제했습니다. 시작 위치를 맞춘 뒤 시작 위치 확인을 누르십시오.');
     }
@@ -759,7 +784,25 @@ function tubeTypeLabel(value) {
   return '미지정';
 }
 
+function motorDirectionLabel(value) {
+  return Number(value) === -1 ? '반시계 방향' : '시계 방향';
+}
+
 async function saveConfig() {
+  const requiredSettings = [
+    [frequencyInput, '공명 진동수'],
+    [tubeLengthInput, '관 길이'],
+    [temperatureInput, '실험실 온도'],
+    [distanceInput, '1회 이동당 추정 거리'],
+    [maxCyclesInput, '마지막 회차']
+  ];
+  const missingSettings = requiredSettings
+    .filter(([input]) => String(input.value || '').trim() === '')
+    .map(([, label]) => label);
+  if (missingSettings.length) {
+    setSettingsMessage(`회색 예시값을 참고하여 ${missingSettings.join(', ')} 항목을 직접 입력하십시오.`, true);
+    return false;
+  }
   const f = Math.max(0, Number(frequencyInput.value || 0));
   const tubeLength = Math.max(0, Number(tubeLengthInput.value || 0));
   const tubeType = ['open','one_end_closed','unknown'].includes(tubeTypeInput.value) ? tubeTypeInput.value : 'unknown';
@@ -772,15 +815,28 @@ async function saveConfig() {
   const dx = Math.max(0, Number(distanceInput.value || 0));
   const maxCycles = Number(maxCyclesInput.value);
   const firstAtStart = firstMeasureAtStartInput.value === '1' ? 1 : 0;
+  const motorForwardDirection = motorForwardDirectionInput.value === '-1' ? -1 : 1;
+  if (!(f > 0) || !(tubeLength > 0) || !(dx > 0)) {
+    setSettingsMessage('공명 진동수, 관 길이, 1회 이동당 추정 거리는 0보다 큰 값으로 입력하십시오.', true);
+    return false;
+  }
   if (!Number.isInteger(maxCycles) || maxCycles < 1 || maxCycles > 1000) {
     setSettingsMessage('마지막 회차는 1~1000 사이의 정수로 입력하십시오.', true);
     return false;
   }
   try {
-    const params = addResearchIds(new URLSearchParams({frequency_hz:String(f), tube_length_cm:String(tubeLength), tube_type:tubeType, temperature_c:temperature===null?'':String(temperature), distance_per_cycle_cm:String(dx), max_cycles:String(maxCycles), first_measure_at_start:String(firstAtStart), t:String(Date.now())}));
+    const params = addResearchIds(new URLSearchParams({frequency_hz:String(f), tube_length_cm:String(tubeLength), tube_type:tubeType, temperature_c:temperature===null?'':String(temperature), distance_per_cycle_cm:String(dx), max_cycles:String(maxCycles), first_measure_at_start:String(firstAtStart), motor_forward_clockwise:motorForwardDirection===1?'1':'0', t:String(Date.now())}));
     const r = await fetch(`/api/config?${params.toString()}`);
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'config error');
+    if (d.config?.data_mode !== 'imported') {
+      if (!d.state) throw new Error('MCU 적용 상태를 확인할 수 없습니다.');
+      const appliedDirection = Number(d.state.motor_forward_direction) === -1 ? -1 : 1;
+      const appliedStepSign = Number(d.state.motor_forward_step_sign);
+      if (appliedDirection !== motorForwardDirection || ![-1, 1].includes(appliedStepSign)) {
+        throw new Error(`MCU 방향 적용 확인 실패: 요청 ${motorDirectionLabel(motorForwardDirection)}, MCU ${motorDirectionLabel(appliedDirection)}`);
+      }
+    }
     config = d.config;
     measurements = normalizeMeasurements(d.measurements);
     if (d.state) updateStatus(d.state);
@@ -793,7 +849,7 @@ async function saveConfig() {
     const savedTarget = config.data_mode === 'imported' ? '불러온 데이터 분석 설정을 저장했습니다.' : '실험 설정을 UNO Q에 저장했습니다.';
     const lengthText = Number(config.tube_length_cm || 0) > 0 ? `${Number(config.tube_length_cm).toFixed(1)} cm` : '미입력';
     const temperatureSavedText = (config.temperature_c !== null && config.temperature_c !== undefined && config.temperature_c !== '') ? `${Number(config.temperature_c).toFixed(1)} ℃` : '미입력';
-    setSettingsMessage(`${savedTarget} 공명 진동수 ${Number(config.frequency_hz || 0).toFixed(1)} Hz · 관 ${lengthText}, ${tubeTypeLabel(config.tube_type)} · 온도 ${temperatureSavedText} · 1회 이동 ${Number(config.distance_per_cycle_cm || 0).toFixed(3)} cm · 마지막 회차 ${Math.round(Number(config.max_cycles || maxCycles))}회 · 첫 데이터 ${config.first_measure_at_start === false ? '1회 이동 후' : '시작 위치(0 cm)'}`);
+    setSettingsMessage(`${savedTarget} 공명 진동수 ${Number(config.frequency_hz || 0).toFixed(1)} Hz · 관 ${lengthText}, ${tubeTypeLabel(config.tube_type)} · 온도 ${temperatureSavedText} · 1회 이동 ${Number(config.distance_per_cycle_cm || 0).toFixed(3)} cm · 마지막 회차 ${Math.round(Number(config.max_cycles || maxCycles))}회 · 첫 데이터 ${config.first_measure_at_start === false ? '1회 이동 후' : '시작 위치(0 cm)'} · 모터 정방향 ${motorDirectionLabel(config.motor_forward_direction)}`);
     return true;
   } catch (e) { setSettingsMessage('설정 저장 오류: ' + e, true); return false; }
 }
@@ -852,6 +908,7 @@ async function resetAll() {
     if (!d.ok) throw new Error(d.error || 'reset error');
     measurements = []; selectedNodes = []; fitData = null;
     if (d.config) config = d.config;
+    clearClassroomNumericInputs();
     updateStatus(d.state); renderTable(); drawChart(); updateManualResult();
     fitResult.textContent = '아직 실행하지 않았습니다.';
     const previousExperimentId = researchExperimentId;
@@ -890,7 +947,7 @@ function drawChart() {
 
   const left=64,right=20,top=18,bottom=52, plotW=width-left-right, plotH=height-top-bottom;
   const calibrated = Number(config.distance_per_cycle_cm) > 0;
-  const configuredMaxCycles = Math.max(1, Number(config.max_cycles || latestState?.max_cycles || 110));
+  const configuredMaxCycles = Math.max(1, Number(config.max_cycles || latestState?.max_cycles || 53));
   const configuredDistance = Number(config.distance_per_cycle_cm || 0);
   const configuredTubeLength = Math.max(0, Number(config.tube_length_cm || 0));
   // 처음부터 전체 측정 범위를 보여 주어 측정 중 가로축이 계속 바뀌지 않게 한다.
@@ -1052,7 +1109,9 @@ function displayFitResult(d, restored=false) {
   }
   fitData=d;
   drawChart();
-  fitResult.innerHTML=`파장 λ = <span class="big">${Number(d.wavelength_cm).toFixed(3)} cm</span><br>같은 종류의 이웃한 점 사이 거리 λ/2 = <b>${Number(d.node_spacing_cm).toFixed(3)} cm</b><br>곡선이 측정값의 모양을 설명하는 정도 R² = <b>${d.r2==null?'-':Number(d.r2).toFixed(4)}</b>${d.sound_speed_m_s?`<br>음속 v = fλ = <b>${Number(d.sound_speed_m_s).toFixed(1)} m/s</b>`:''}<br><span class="muted">사용한 점 ${d.used_points}개, 입력 범위 초과로 제외한 점 ${d.excluded_clipped_points}개. ${restored?'실험 세트에 저장된 곡선 맞춤 결과를 불러왔습니다.':'보정된 위치를 이용한 곡선 맞춤 결과입니다.'} R²가 높아도 파장 자체가 반드시 정확하다는 뜻은 아닙니다.</span>`;
+  const theoryText = d.theoretical_sound_speed_m_s == null ? '' : `<br>${Number(d.temperature_c).toFixed(1)} ℃에서의 이론 음속 = <b>${Number(d.theoretical_sound_speed_m_s).toFixed(1)} m/s</b>`;
+  const errorText = d.sound_speed_relative_error_percent == null ? '' : `<br>이론값과의 상대 오차율 = <b>${Number(d.sound_speed_relative_error_percent).toFixed(2)} %</b>`;
+  fitResult.innerHTML=`파장 λ = <span class="big">${Number(d.wavelength_cm).toFixed(3)} cm</span><br>같은 종류의 이웃한 점 사이 거리 λ/2 = <b>${Number(d.node_spacing_cm).toFixed(3)} cm</b><br>곡선이 측정값의 모양을 설명하는 정도 R² = <b>${d.r2==null?'-':Number(d.r2).toFixed(4)}</b>${d.sound_speed_m_s?`<br>측정값으로 계산한 음속 v = fλ = <b>${Number(d.sound_speed_m_s).toFixed(1)} m/s</b>`:''}${theoryText}${errorText}<br><span class="muted">사용한 점 ${d.used_points}개, 입력 범위 초과로 제외한 점 ${d.excluded_clipped_points}개. 이론 음속은 v = 331.3 + 0.606T인 건조 공기 근사값입니다. ${restored?'실험 세트에 저장된 곡선 맞춤 결과를 불러왔습니다.':'보정된 위치를 이용한 곡선 맞춤 결과입니다.'} R²가 높아도 파장 자체가 반드시 정확하다는 뜻은 아닙니다.</span>`;
 }
 
 async function runFit() {
@@ -1082,7 +1141,7 @@ function experimentBaseName() {
 }
 
 function buildMeasurementCsv() {
-  const rows=[['session_id','experiment_id','cycle','estimated_position_cm','avg_peak_to_peak_v','std_peak_to_peak_v','clipped','frequency_hz','tube_length_cm','tube_type','temperature_c','distance_per_cycle_cm','first_measure_at_start','max_cycles','time']];
+  const rows=[['session_id','experiment_id','cycle','estimated_position_cm','avg_peak_to_peak_v','std_peak_to_peak_v','clipped','frequency_hz','tube_length_cm','tube_type','temperature_c','distance_per_cycle_cm','first_measure_at_start','max_cycles','motor_forward_direction','time']];
   for(const m of measurements) rows.push([
     researchSessionId,
     researchExperimentId,
@@ -1098,6 +1157,7 @@ function buildMeasurementCsv() {
     config.distance_per_cycle_cm||'',
     config.first_measure_at_start === false ? 0 : 1,
     config.max_cycles||'',
+    Number(config.motor_forward_direction) === -1 ? -1 : 1,
     m.time||''
   ]);
   return rows.map(r=>r.map(csvEscape).join(',')).join('\n');
@@ -1234,7 +1294,7 @@ function buildChatCsv(modelName=lastChatModel) {
 
 async function fetchLatestFitForExport() {
   try {
-    const params=addResearchIds(new URLSearchParams({t:String(Date.now())}));
+    const params=addResearchIds(new URLSearchParams({record:'0', t:String(Date.now())}));
     const r=await fetch(`/api/fit?${params.toString()}`);
     const d=await r.json();
     if(d && d.ok) { fitData=d; drawChart(); }
@@ -1275,6 +1335,7 @@ async function downloadExperimentBundle() {
         distance_per_cycle_cm: Number(config.distance_per_cycle_cm||0),
         first_measure_at_start: config.first_measure_at_start !== false,
         max_cycles: Number(config.max_cycles||0),
+        motor_forward_direction: Number(config.motor_forward_direction) === -1 ? -1 : 1,
         measurement_points: measurements.length,
         data_mode: config.data_mode||'live'
       },
@@ -1341,6 +1402,7 @@ function csvDatasetFromRows(csvRows) {
   const iDx=idx('distance_per_cycle_cm');
   const iFirst=idx('first_measure_at_start');
   const iMax=idx('max_cycles');
+  const iMotorDirection=idx('motor_forward_direction','forward_direction');
   const iTime=idx('time','saved_at');
   if(iCycle<0 || iAvg<0) throw new Error('필수 열 cycle과 avg_peak_to_peak_v를 찾을 수 없습니다.');
 
@@ -1389,7 +1451,8 @@ function csvDatasetFromRows(csvRows) {
   const maxRev=Math.max(...data.map(d=>d.rev));
   if(!Number.isInteger(maxCycles) || maxCycles<maxRev) maxCycles=maxRev;
   maxCycles=Math.min(1000,Math.max(1,maxCycles));
-  return {data,frequency_hz:Math.max(0,frequency),tube_length_cm:tubeLength,tube_type:tubeType,temperature_c:temperature,distance_per_cycle_cm:Math.max(0,dx||0),first_measure_at_start:firstAtStart,max_cycles:maxCycles};
+  const motorForwardDirection=iMotorDirection>=0 && Number(firstDataRow[iMotorDirection])===-1 ? -1 : 1;
+  return {data,frequency_hz:Math.max(0,frequency),tube_length_cm:tubeLength,tube_type:tubeType,temperature_c:temperature,distance_per_cycle_cm:Math.max(0,dx||0),first_measure_at_start:firstAtStart,max_cycles:maxCycles,motor_forward_direction:motorForwardDirection};
 }
 
 async function importParsedMeasurementDataset(parsed, sourceLabel='CSV') {
@@ -1402,6 +1465,7 @@ async function importParsedMeasurementDataset(parsed, sourceLabel='CSV') {
     distance_per_cycle_cm:String(parsed.distance_per_cycle_cm),
     max_cycles:String(parsed.max_cycles),
     first_measure_at_start:parsed.first_measure_at_start?'1':'0',
+    motor_forward_direction:Number(parsed.motor_forward_direction)===-1?'-1':'1',
     total_rows:String(parsed.data.length),
     t:String(Date.now())
   }));
@@ -1735,8 +1799,7 @@ async function sendChatQuestion(questionOverride=null) {
   logActivity('chat_question_submitted', {
     target_id:'chatInput',
     target_label:'정상파 실험 챗봇 질문',
-    value:question,
-    detail:{source:questionOverride===null?'typed':'suggestion', measurement_points:measurements.length}
+    detail:{source:questionOverride===null?'typed':'suggestion', measurement_points:measurements.length, question_length:question.length}
   });
 
   chatBusy = true;
@@ -1761,8 +1824,7 @@ async function sendChatQuestion(questionOverride=null) {
     chatModelText.textContent = `${lastChatModel} · 측정점 ${d.context_points}개`;
     logActivity('chat_answer_received', {
       target_id:'chatMessages',
-      value:d.answer,
-      detail:{model:lastChatModel, context_points:Number(d.context_points || 0)}
+      detail:{model:lastChatModel, context_points:Number(d.context_points || 0), answer_length:String(d.answer || '').length}
     });
     saveChatMessagesToSession();
   } catch (e) {
